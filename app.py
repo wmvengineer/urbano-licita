@@ -247,9 +247,7 @@ if not st.session_state.user:
             color: #fff !important;
         }
 
-        /* --- ESTILO ESPECÍFICO PEDIDO NO PROMPT --- */
-        
-        /* 1. Abas Visíveis e Arredondadas */
+        /* --- ESTILO DAS ABAS (Cor #364C50 Opaca) --- */
         .stTabs [data-baseweb="tab-list"] {
             gap: 10px;
             justify-content: center;
@@ -257,7 +255,7 @@ if not st.session_state.user:
             border-bottom: 1px solid rgba(255,255,255,0.1);
         }
         .stTabs [data-baseweb="tab"] {
-            background-color: rgba(255, 255, 255, 0.15); /* Fundo sutil */
+            background-color: #364C50 !important; /* Cor opaca solicitada */
             color: #fff !important; /* Texto Branco */
             font-family: 'Poppins', sans-serif;
             font-size: 14px;
@@ -266,17 +264,19 @@ if not st.session_state.user:
             padding: 10px 20px;
             margin-right: 2px;
             transition: all 0.3s;
+            opacity: 1 !important; /* Garantir sem transparência */
         }
         .stTabs [aria-selected="true"] {
-            background-color: rgba(255, 255, 255, 0.35); /* Mais claro selecionado */
+            background-color: #364C50 !important;
             font-weight: bold;
+            opacity: 1 !important;
+            border-bottom: 2px solid #fff; /* Destaque sutil para a selecionada */
         }
         .stTabs [data-baseweb="tab-highlight"] {
-            background-color: transparent; /* Remove linha padrão do Streamlit */
+            background-color: transparent; 
         }
 
         /* 2. Botão Recuperar Senha (#babac2) */
-        /* Seleciona o botão na segunda coluna do formulário de login */
         [data-testid="stForm"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:nth-of-type(2) button {
             background-color: #babac2 !important;
             color: #fff !important;
@@ -305,6 +305,7 @@ if not st.session_state.user:
         img_src = f"data:image/png;base64,{img_b64}" if img_b64 else ""
 
         # Cabeçalho Visual (Logo e Título)
+        # CONTAINER AUMENTADO (160px) COM IMAGEM FIXA (110px) PARA AUMENTAR BORDA BRANCA
         if img_src:
             html_logo = f"""
             <div style="text-align: center; margin-bottom: 30px;">
@@ -312,16 +313,16 @@ if not st.session_state.user:
                     display: flex;
                     justify-content: center;
                     align-items: center;
-                    width: 120px;
-                    height: 120px;
+                    width: 160px;
+                    height: 160px;
                     border-radius: 50%;
                     background-color: #fff;
                     margin: 0 auto;
                     overflow: hidden;
+                    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
                 ">
-                    <img src="{img_src}" style="width: 100%; height: auto; object-fit: cover;" />
+                    <img src="{img_src}" style="width: 110px; height: auto; object-fit: contain;" />
                 </div>
-                <!-- TEXTO REMOVIDO CONFORME SOLICITADO -->
             </div>
             """
         else:
