@@ -36,9 +36,6 @@ db.init_db()
 try:
     if "daily_check_done" not in st.session_state:
         # Executa apenas uma vez por sessão para não sobrecarregar
-        # Nota: db.run_daily_automation não estava definido no arquivo database.py fornecido, 
-        # mas mantive a estrutura original supondo que exista ou seja o check_deadlines_and_notify
-        # Se for o check_deadlines_and_notify, ele deve ser chamado aqui manualmente se desejado.
         pass
         st.session_state.daily_check_done = True
 except:
@@ -80,7 +77,7 @@ def convert_to_pdf(source_md):
 def extract_title(text):
     """
     Extrai título no padrão estrito:
-    "Edital" + "Órgão" + "Objeto (max 5 palavras)" + "Data da Sessão"
+    "Edital" + "Órgão" + "Objeto (max 5 palavras)" + "Data da Sessão/Proposta"
     """
     try:
         # 1. Extração do Órgão (Baseado na Pergunta 1)
@@ -102,12 +99,24 @@ def extract_title(text):
             else:
                 objeto_resumo = " ".join(palavras)
 
-        # 3. Extração da Data da Sessão (Baseado na Pergunta 5)
+        # 3. Extração da Data (Sessão ou Proposta)
         data_sessao = "Data a definir"
-        # Procura data no formato DD/MM/YYYY
-        match_data = re.search(r"(?:5\.|data).*?(\d{2}/\d{2}/\d{4})", text, re.IGNORECASE)
-        if match_data:
-            data_sessao = match_data.group(1)
+        
+        # Estratégia: Isolar a resposta da Pergunta 5 (onde pedimos a data)
+        # Busca texto entre "5." e o próximo item "6." ou "CRONOGRAMA"
+        match_q5 = re.search(r"5\.(.*?)(?:6\.|CRONOGRAMA|\n\n|$)", text, re.DOTALL | re.IGNORECASE)
+        
+        if match_q5:
+            # Se achou o bloco da 5, pega a primeira data DD/MM/YYYY que aparecer
+            block_text = match_q5.group(1)
+            match_date = re.search(r"(\d{2}/\d{2}/\d{4})", block_text)
+            if match_date:
+                data_sessao = match_date.group(1)
+        else:
+            # Fallback antigo: Procura 'data' globalmente se a estrutura falhar
+            match_generic = re.search(r"(?:5\.|data).*?(\d{2}/\d{2}/\d{4})", text, re.IGNORECASE)
+            if match_generic:
+                data_sessao = match_generic.group(1)
 
         # Formatação Final Solicitada
         return f"Edital {orgao} | {objeto_resumo} | Sessão: {data_sessao}"
@@ -421,7 +430,7 @@ elif menu == "Análise de Editais":
                     2. Qual o objeto do edital? (Resumo completo)
                     3. Qual o valor estimado para a realização dos serviços?
                     4. Qual a plataforma onde será realizado o certame?
-                    5. Qual a data de realização do certame e até quando é possível enviar a proposta?
+                    5. Qual a data de realização do certame? (Caso não haja sessão definida, INFORME A DATA LIMITE PARA ENVIO DE PROPOSTAS). Formato: DD/MM/YYYY.
                     6. **CRONOGRAMA**: Datas e Prazos.
                     7. **HABILITAÇÃO JURÍDICA/FISCAL**: Exigências.
                     8. **FINANCEIRO**: Índices (LG, SG, LC) e valores.
@@ -450,7 +459,6 @@ elif menu == "Análise de Editais":
     else:
         if st.session_state.last_analysis_id:
             st.info("Classifique este edital para organizá-lo no Histórico e Calendário:")
-            # CORREÇÃO DO LOOP: Buscar status do banco em vez de passar None
             curr_item = db.get_history_item(user['username'], st.session_state.last_analysis_id)
             if curr_item:
                 render_status_controls(st.session_state.last_analysis_id, curr_item.get('status'), curr_item.get('note', ''))
@@ -587,7 +595,6 @@ elif menu == "📅 Calendário":
                     }
                 })
     
-    # CORREÇÃO: Renderiza o calendário mesmo se vazio, removendo o 'else' que ocultava o componente
     if not events:
         st.info("Nenhum edital verde com data encontrada. O calendário aparecerá vazio.")
 
