@@ -274,7 +274,8 @@ def send_email(to_email, subject, body_html):
         sender_password = st.secrets["EMAIL"]["EMAIL_PASSWORD"]
 
         msg = MIMEMultipart()
-        msg['From'] = f"Urbano Licitações <{sender_email}>"
+        # CORREÇÃO ERRO 553: O remetente deve ser idêntico ao usuário logado, sem nomes fantasia.
+        msg['From'] = sender_email 
         msg['To'] = to_email
         msg['Subject'] = subject
 
@@ -282,7 +283,8 @@ def send_email(to_email, subject, body_html):
 
         with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
             server.login(sender_email, sender_password)
-            server.send_message(msg)
+            # Uso explícito de sendmail para evitar problemas de relay
+            server.sendmail(sender_email, to_email, msg.as_string())
         
         return True, "Enviado"
     except Exception as e:
@@ -293,7 +295,7 @@ def count_business_days_left(start_date, end_date):
     try:
         # Freq='B' força dias úteis.
         bdays = pd.bdate_range(start=start_date, end=end_date, freq='B')
-        # Subtrai 1 pois o range é inclusivo (Hoje -> Amanhã = 2 itens, mas 1 dia de prazo)
+        # Subtrai 1 pois o range é inclusivo
         return len(bdays) - 1
     except: return 999
 
@@ -360,10 +362,6 @@ def check_deadlines_and_notify():
                     
                     bdays_left = count_business_days_left(today, event_date)
                     
-                    # Log de debug para o admin ver o cálculo
-                    # (Remova se ficar muito poluído, mas útil agora)
-                    # logs.append(f"Debug {username}: {event_date_str} -> {bdays_left} dias úteis.")
-
                     # CRITÉRIO: Entre 0 e 2 dias úteis restantes
                     if 0 <= bdays_left <= 2:
                         
