@@ -441,7 +441,41 @@ if fresh:
     limit = db.get_plan_limit(user['plan'])
 else: logout()
 
+# --- CSS PARA A SIDEBAR (Barra Lateral) ---
+st.markdown("""
+    <style>
+    /* Altera o fundo da Sidebar para #364C50 */
+    [data-testid="stSidebar"] {
+        background-color: #364C50;
+    }
+    
+    /* Altera todos os textos da Sidebar para Branco */
+    [data-testid="stSidebar"] h1, 
+    [data-testid="stSidebar"] h2, 
+    [data-testid="stSidebar"] h3, 
+    [data-testid="stSidebar"] span, 
+    [data-testid="stSidebar"] div, 
+    [data-testid="stSidebar"] label, 
+    [data-testid="stSidebar"] p {
+        color: #FFFFFF !important;
+    }
+    
+    /* Mantém o texto interno do botão "Sair" na cor original (escuro) para contraste com o botão branco */
+    [data-testid="stSidebar"] .stButton button div,
+    [data-testid="stSidebar"] .stButton button p {
+        color: #31333F !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 with st.sidebar:
+    # LOGO INSERIDA (250px)
+    if os.path.exists("LOGO URBANO OFICIAL.png"):
+        st.image("LOGO URBANO OFICIAL.png", width=250)
+    else:
+        # Fallback caso a imagem não seja encontrada, mantém ícone
+        st.markdown("<div style='font-size: 100px; text-align: center;'>🏢</div>", unsafe_allow_html=True)
+
     st.markdown(f"### Olá, {user['name']}")
     st.caption(f"Plano: **{user['plan'].upper()}**")
     pct = min(user['credits']/limit, 1.0) if limit > 0 else 1.0
