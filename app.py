@@ -448,20 +448,22 @@ elif menu == "Análise de Editais":
             /* Tradução do Botão "Browse files" */
             [data-testid='stFileUploader'] button {
                 color: transparent !important; /* Oculta texto original */
-                position: relative; /* Cria referência para o texto novo */
+                position: relative;
+                min-width: 180px; /* <--- FORÇA O BOTÃO A FICAR MAIS LARGO */
             }
             [data-testid='stFileUploader'] button::after {
                 content: "Procurar arquivos";
                 color: rgb(49, 51, 63); /* Cor original do texto */
+                font-size: 14px; /* Garante que o texto não fique gigante */
                 position: absolute;
                 left: 0;
                 top: 0;
-                width: 80%;
-                height: 80%;
+                width: 100%;
+                height: 100%;
                 display: flex;
                 align_items: center;
                 justify_content: center;
-                pointer-events: none; /* Garante que o clique passe para o botão */
+                pointer-events: none;
             }
             </style>
         """, unsafe_allow_html=True)
