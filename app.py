@@ -207,9 +207,10 @@ if not st.session_state.user:
             font-size: 13px;
         }
         
+        /* ALTERAÇÃO AQUI: Cor do texto mudada para #364C50 */
         div[data-testid="stTextInput"] input, div[data-testid="stNumberInput"] input {
             background-color: transparent !important;
-            color: #fff !important;
+            color: #364C50 !important; 
             border: none !important;
             border-bottom: 2px solid rgba(255,255,255,0.24) !important;
             border-radius: 0px !important;
@@ -220,6 +221,11 @@ if not st.session_state.user:
         div[data-testid="stTextInput"] input:focus, div[data-testid="stNumberInput"] input:focus {
             border-bottom: 2px solid #fff !important;
             box-shadow: none !important;
+        }
+
+        /* NOVA REGRA: Remove o texto "Press Enter to Submit Form" */
+        [data-testid="InputInstructions"] {
+            display: none !important;
         }
 
         /* Botões Gerais do Formulário */
@@ -255,22 +261,22 @@ if not st.session_state.user:
             border-bottom: 1px solid rgba(255,255,255,0.1);
         }
         .stTabs [data-baseweb="tab"] {
-            background-color: #364C50 !important; /* Cor opaca solicitada */
-            color: #fff !important; /* Texto Branco */
+            background-color: #364C50 !important;
+            color: #fff !important;
             font-family: 'Poppins', sans-serif;
             font-size: 14px;
             border: none;
-            border-radius: 15px 15px 0 0; /* Arredondado em cima */
+            border-radius: 15px 15px 0 0;
             padding: 10px 20px;
             margin-right: 2px;
             transition: all 0.3s;
-            opacity: 1 !important; /* Garantir sem transparência */
+            opacity: 1 !important;
         }
         .stTabs [aria-selected="true"] {
             background-color: #364C50 !important;
             font-weight: bold;
             opacity: 1 !important;
-            border-bottom: 2px solid #fff; /* Destaque sutil para a selecionada */
+            border-bottom: 2px solid #fff;
         }
         .stTabs [data-baseweb="tab-highlight"] {
             background-color: transparent; 
