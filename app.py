@@ -205,22 +205,19 @@ if not st.session_state.user:
         }
 
         /* 
-           TRUQUE PARA O CARTÃO ENGLOBAR ABAS E FORMULÁRIO:
-           Estilizamos o bloco vertical interno da coluna central.
-           O seletor abaixo busca o 2º elemento filho na estrutura de colunas do Streamlit (coluna do meio)
-           e aplica o fundo azul marinho nele.
+           REINSERÇÃO DO CARTÃO AZUL MARINHO:
+           Alvo: Div que envolve o conteúdo da coluna do meio.
+           Usamos nth-of-type(2) para pegar a segunda coluna gerada pelo st.columns.
         */
-        div[data-testid="column"]:nth-of-type(2) > div[data-testid="stVerticalBlock"] > div.stVerticalBlock {
-            background: #003366; /* Azul Marinho Sólido */
-            background: -webkit-linear-gradient(top, #003366, #001a33); /* Gradiente */
-            background: linear-gradient(to bottom, #003366, #001933);
-            
-            border-radius: 10px;
-            padding: 40px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        [data-testid="column"]:nth-of-type(2) > div {
+            background: #003366; /* Cor de fallback */
+            background: linear-gradient(180deg, #003366 0%, #001a33 100%); /* Gradiente Azul Marinho */
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
 
-        /* Removemos o estilo do form individual, pois o container pai já é o cartão */
+        /* Removemos o estilo do form individual */
         div[data-testid="stForm"] {
             background: transparent;
             border: none;
@@ -228,7 +225,7 @@ if not st.session_state.user:
             box-shadow: none;
         }
 
-        /* Estilização dos Inputs (Linha inferior, texto branco) */
+        /* Estilização dos Inputs */
         div[data-testid="stTextInput"] label, div[data-testid="stNumberInput"] label {
             color: #eeeeee !important;
             font-family: 'Poppins', sans-serif;
@@ -250,7 +247,7 @@ if not st.session_state.user:
             box-shadow: none !important;
         }
 
-        /* Estilização do Botão (Branco) */
+        /* Estilização do Botão de Ação (Login/Cadastrar) */
         div.stButton > button {
             font-family: 'Poppins', sans-serif;
             font-size: 16px;
@@ -274,30 +271,44 @@ if not st.session_state.user:
             background-color: #ddd !important;
         }
 
-        /* Abas (Login/Cadastro/Recuperar) */
+        /* 
+           ABAS COMO BOTÕES BRANCOS COM TEXTO PRETO 
+        */
         .stTabs [data-baseweb="tab-list"] {
             gap: 10px;
             justify-content: center;
             margin-bottom: 20px;
-            border-bottom: 1px solid rgba(255,255,255,0.2);
-        }
-        .stTabs [data-baseweb="tab"] {
-            color: rgba(255,255,255,0.6);
-            font-family: 'Poppins', sans-serif;
-            font-size: 14px;
-            border: none;
             background-color: transparent;
         }
-        .stTabs [aria-selected="true"] {
-            color: #fff !important;
-            font-weight: bold;
-            border-bottom: 2px solid #fff;
-        }
-        .stTabs [data-baseweb="tab-highlight"] {
-            background-color: #fff;
+        
+        /* Botão Inativo */
+        .stTabs [data-baseweb="tab"] {
+            background-color: #ffffff !important; /* Fundo Branco */
+            color: #000000 !important;           /* Texto Preto */
+            border-radius: 5px !important;
+            padding: 8px 16px !important;
+            border: 1px solid #ccc !important;
+            font-family: 'Poppins', sans-serif;
+            font-size: 14px;
+            font-weight: 500;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
 
-        /* Ajuste de Espaçamento */
+        /* Botão Ativo (Selecionado) */
+        .stTabs [aria-selected="true"] {
+            background-color: #f0f0f0 !important; /* Levemente cinza para destaque */
+            color: #000000 !important;
+            font-weight: 700 !important;
+            border: 2px solid #003366 !important; /* Borda azul para indicar seleção */
+            transform: scale(1.05);
+        }
+        
+        /* Remove a linha de highlight padrão do Streamlit */
+        .stTabs [data-baseweb="tab-highlight"] {
+            display: none;
+        }
+
+        /* Ajuste de Espaçamento vertical */
         [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
             align-items: center;
         }
@@ -317,7 +328,7 @@ if not st.session_state.user:
             # Fallback se não tiver imagem
             st.markdown("<h1 style='text-align:center; color:white;'>URBANO</h1>", unsafe_allow_html=True)
 
-        # Abas DENTRO do contexto da coluna (que está estilizada como cartão via CSS)
+        # Abas DENTRO do cartão azul
         t1, t2, t3 = st.tabs(["ENTRAR", "CRIAR CONTA", "RECUPERAR"])
         
         # --- ABA LOGIN ---
