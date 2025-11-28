@@ -1,0 +1,6 @@
+.streamlit/
+firebase_key.json
+__pycache__/
+*.pyc
+dados_sistema/
+*.json

@@ -1,0 +1,10 @@
+streamlit
+firebase-admin
+google-generativeai
+bcrypt
+extra-streamlit-components
+xhtml2pdf
+markdown
+pandas
+streamlit-calendar
+toml

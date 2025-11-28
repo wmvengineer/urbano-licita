@@ -1,0 +1,30 @@
+name: Disparo Diario de Emails
+
+on:
+  schedule:
+    # 09:00 UTC = 06:00 da manhã no Brasil
+    - cron: '0 9 * * *'
+  workflow_dispatch: # Permite rodar manualmente clicando num botão
+
+jobs:
+  run-scheduler:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v3
+
+      - name: Instalar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Instalar Bibliotecas
+        run: pip install -r requirements.txt
+
+      - name: Rodar Script
+        env:
+          # Estas variáveis virão dos Secrets do GitHub
+          FIREBASE_KEY_JSON: ${{ secrets.FIREBASE_KEY_JSON }}
+          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        run: python scheduler.py

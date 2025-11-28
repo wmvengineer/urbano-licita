@@ -1,0 +1,628 @@
+import streamlit as st
+import google.generativeai as genai
+import os
+import re
+import time
+import tempfile
+import pandas as pd
+from datetime import datetime, timedelta
+import database as db
+import extra_streamlit_components as stx
+from io import BytesIO
+
+# --- LIBS PARA PDF E CALENDÁRIO ---
+from xhtml2pdf import pisa
+import markdown
+from streamlit_calendar import calendar
+
+# --- CONFIGURAÇÃO ---
+st.set_page_config(page_title="Urbano", layout="wide", page_icon="🏢")
+
+# API KEY
+try:
+    if "GOOGLE_API_KEY" in st.secrets:
+        genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
+    else:
+        # Fallback local se necessário
+        pass
+except:
+    st.error("Configure a API Key.")
+    st.stop()
+
+db.init_db()
+
+# --- AUTOMAÇÃO DE E-MAILS (Disparo Diário) ---
+# Tenta rodar a verificação diária sem travar a interface do usuário atual
+try:
+    if "daily_check_done" not in st.session_state:
+        # Executa apenas uma vez por sessão para não sobrecarregar
+        log_auto = db.run_daily_automation()
+        if log_auto and st.session_state.user and st.session_state.user.get('role') == 'admin':
+            # Se for admin logado, mostra um toast discreto que rodou
+            st.toast("📧 Automação de e-mails executada.", icon="🤖")
+        st.session_state.daily_check_done = True
+except:
+    pass
+
+# --- ESTRUTURA DE DOCUMENTOS ---
+DOC_STRUCTURE = {
+    "1. Habilitacao Juridica": ["Contrato Social", "CNPJ", "Documentos Sócios"],
+    "2. Habilitacao Fiscal": ["Federal", "Estadual", "Municipal", "FGTS", "Trabalhista"],
+    "3. Qualificacao Tecnica": ["Atestados Operacionais", "Atestados Profissionais", "CAT"],
+    "4. Habilitacao Financeira": ["Balanco Patrimonial", "Indices Financeiros", "Certidao Falencia"]
+}
+
+# --- FUNÇÕES AUXILIARES ---
+
+def convert_to_pdf(source_md):
+    """Converte Markdown para PDF com estilo profissional."""
+    html_text = markdown.markdown(source_md)
+    styles = """
+    <style>
+        @page { size: A4; margin: 2cm; }
+        body { font-family: Helvetica, sans-serif; font-size: 11px; line-height: 1.5; color: #333; text-align: justify; }
+        h1 { color: #003366; font-size: 16px; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-top: 20px; }
+        h2 { color: #005599; font-size: 14px; margin-top: 15px; margin-bottom: 5px; }
+        h3 { color: #0077CC; font-size: 12px; margin-top: 10px; }
+        p { margin-bottom: 8px; }
+        strong { color: #000; font-weight: bold; }
+        .chat-section { margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px; }
+        .chat-q { font-weight: bold; color: #444; margin-top: 10px; }
+        .chat-a { color: #555; font-style: italic; margin-left: 15px; margin-bottom: 10px; }
+    </style>
+    """
+    full_html = f"<html><head>{styles}</head><body>{html_text}</body></html>"
+    result_file = BytesIO()
+    pisa_status = pisa.CreatePDF(full_html, dest=result_file)
+    if pisa_status.err: return None
+    return result_file.getvalue()
+
+def extract_title(text):
+    """
+    Extrai título no padrão estrito:
+    "Edital" + "Órgão" + "Objeto (max 5 palavras)" + "Data da Sessão"
+    """
+    try:
+        # 1. Extração do Órgão (Baseado na Pergunta 1)
+        orgao = "Órgão Indefinido"
+        match_orgao = re.search(r"(?:1\.|órgão).*?[:\-\?]\s*(.*?)(?:\n|2\.|Qual|$)", text, re.IGNORECASE)
+        if match_orgao: 
+            orgao = match_orgao.group(1).replace("*", "").strip()
+
+        # 2. Extração do Objeto (Baseado na Pergunta 2 - Max 5 Palavras)
+        objeto_resumo = "Objeto Geral"
+        match_objeto = re.search(r"(?:2\.|objeto).*?[:\-\?]\s*(.*?)(?:\n|3\.|Qual|$)", text, re.IGNORECASE | re.DOTALL)
+        if match_objeto:
+            raw_obj = match_objeto.group(1).replace("*", "").strip()
+            # Remove pontuação excessiva
+            raw_obj = re.sub(r'[^\w\s]', '', raw_obj)
+            palavras = raw_obj.split()
+            if len(palavras) > 5:
+                objeto_resumo = " ".join(palavras[:5]) + "..."
+            else:
+                objeto_resumo = " ".join(palavras)
+
+        # 3. Extração da Data da Sessão (Baseado na Pergunta 5)
+        data_sessao = "Data a definir"
+        # Procura data no formato DD/MM/YYYY
+        match_data = re.search(r"(?:5\.|data).*?(\d{2}/\d{2}/\d{4})", text, re.IGNORECASE)
+        if match_data:
+            data_sessao = match_data.group(1)
+
+        # Formatação Final Solicitada
+        return f"Edital {orgao} | {objeto_resumo} | Sessão: {data_sessao}"
+    except:
+        return f"Edital {datetime.now().strftime('%d/%m/%Y')} - Processado"
+
+def extract_date_for_calendar(title_str):
+    """Extrai YYYY-MM-DD do título para o componente de calendário."""
+    try:
+        match = re.search(r"(\d{2})/(\d{2})/(\d{4})", title_str)
+        if match:
+            # Retorna YYYY-MM-DD
+            return f"{match.group(3)}-{match.group(2)}-{match.group(1)}"
+    except: pass
+    return None
+
+def render_status_controls(item_id, current_status, current_note):
+    """Renderiza os controles de status (Checks Coloridos) e salva no banco."""
+    st.caption("Classificação do Edital (Marque uma opção):")
+    c1, c2, c3 = st.columns([0.15, 0.15, 0.7])
+    
+    # Checkboxes agindo como Radio Buttons manuais
+    is_red = c1.checkbox("🟥 Inviável", value=(current_status=='red'), key=f"r_{item_id}")
+    is_yellow = c2.checkbox("🟨 Ajustes", value=(current_status=='yellow'), key=f"y_{item_id}")
+    is_green = c3.checkbox("🟩 Apto", value=(current_status=='green'), key=f"g_{item_id}")
+
+    new_status = current_status
+    
+    # Lógica de seleção única
+    if is_red and current_status != 'red': new_status = 'red'
+    elif is_yellow and current_status != 'yellow': new_status = 'yellow'
+    elif is_green and current_status != 'green': new_status = 'green'
+    
+    # Se desmarcar o atual, volta para None
+    if not is_red and not is_yellow and not is_green: new_status = None
+
+    # Lógica de atualização (se mudou, salva e recarrega para atualizar checks)
+    if new_status != current_status:
+        db.update_analysis_status(st.session_state.user['username'], item_id, new_status, current_note)
+        st.rerun()
+
+    # Caixa de Texto Condicional para Observação
+    if new_status:
+        placeholder_text = ""
+        if new_status == 'red': placeholder_text = "Descreva os motivos da inviabilidade..."
+        elif new_status == 'yellow': placeholder_text = "Quais ajustes são necessários na documentação?"
+        elif new_status == 'green': placeholder_text = "Observações para a participação..."
+        
+        new_note = st.text_area("Observações:", value=current_note, placeholder=placeholder_text, key=f"note_{item_id}")
+        
+        # Botão para salvar nota (para não salvar a cada digito)
+        if st.button("💾 Salvar Observação", key=f"save_{item_id}"):
+            db.update_analysis_status(st.session_state.user['username'], item_id, new_status, new_note)
+            st.toast("Observação salva com sucesso!")
+
+# --- SESSÃO & COOKIES ---
+cookie_manager = stx.CookieManager(key="urbano_cookies")
+if 'user' not in st.session_state: st.session_state.user = None
+
+if not st.session_state.user:
+    time.sleep(0.1)
+    c = cookie_manager.get("urbano_auth")
+    if c:
+        try:
+            u, t = c.split('|')
+            if db.check_session_valid(u, t):
+                raw = db.get_user_by_username(u)
+                if raw:
+                    st.session_state.user = {
+                        "username": raw.get('username'), "name": raw.get('name'),
+                        "role": raw.get('role'), "plan": raw.get('plan_type', 'free'),
+                        "credits": raw.get('credits_used', 0), "token": raw.get('token')
+                    }
+                    st.rerun()
+        except: pass
+
+def logout():
+    st.session_state.user = None
+    cookie_manager.delete("urbano_auth")
+    time.sleep(1)
+    st.rerun()
+
+# --- TELA DE LOGIN ---
+if not st.session_state.user:
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        if os.path.exists("LOGO URBANO OFICIAL.png"): st.image("LOGO URBANO OFICIAL.png", width=150)
+        else: st.title("🏢")
+    with c2: st.title("Urbano - Inteligência em Licitações")
+    
+    t1, t2 = st.tabs(["Login", "Cadastro"])
+    with t1:
+        with st.form("f_login"):
+            u = st.text_input("Usuário"); p = st.text_input("Senha", type="password")
+            if st.form_submit_button("Entrar"):
+                ok, d = db.login_user(u, p)
+                if ok:
+                    st.session_state.user = {
+                        "username": d.get('username'), "name": d.get('name'),
+                        "role": d.get('role'), "plan": d.get('plan_type', 'free'),
+                        "credits": d.get('credits_used', 0), "token": d.get('token')
+                    }
+                    cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
+                    st.rerun()
+                else: st.error("Erro no login.")
+    with t2:
+        with st.form("f_cad"):
+            nu = st.text_input("Usuário"); nn = st.text_input("Nome"); ne = st.text_input("Email"); np = st.text_input("Senha", type="password")
+            if st.form_submit_button("Criar Conta"):
+                ok, m = db.register_user(nu, nn, ne, np)
+                if ok: st.success("Criado! Faça login."); time.sleep(1)
+                else: st.error(m)
+    st.stop()
+
+# --- ÁREA LOGADA ---
+user = st.session_state.user
+if 'analise_atual' not in st.session_state: st.session_state.analise_atual = None
+if 'chat_history' not in st.session_state: st.session_state.chat_history = []
+if 'gemini_files_handles' not in st.session_state: st.session_state.gemini_files_handles = []
+if 'last_analysis_id' not in st.session_state: st.session_state.last_analysis_id = None
+
+fresh = db.get_user_by_username(user['username'])
+if fresh: 
+    user['credits'] = fresh.get('credits_used', 0)
+    user['plan'] = fresh.get('plan_type', 'free')
+    limit = db.get_plan_limit(user['plan'])
+else: logout()
+
+with st.sidebar:
+    st.markdown(f"### Olá, {user['name']}")
+    st.caption(f"Plano: **{user['plan'].upper()}**")
+    pct = min(user['credits']/limit, 1.0) if limit > 0 else 1.0
+    st.progress(pct)
+    st.write(f"Análises: {user['credits']} / {limit}")
+    if user['credits'] >= limit and limit < 9999: st.error("Limite atingido!")
+
+    st.divider()
+    # MENUS ATUALIZADOS COM CALENDÁRIO
+    menu = st.radio("Menu", ["Análise de Editais", "📅 Calendário", "📂 Documentos da Empresa", "📜 Histórico", "Assinatura"])
+    if user.get('role') == 'admin':
+        st.divider()
+        if st.checkbox("Painel Admin"): menu = "Admin"
+    
+    if st.button("Sair"): logout()
+
+# --- TELAS ---
+
+# 1. ADMIN
+if menu == "Admin":
+    st.title("🔧 Gestão Administrativa")
+    stats = db.admin_get_users_stats()
+    df = pd.DataFrame(stats)
+    
+    if not df.empty:
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Usuários", len(df))
+        k2.metric("Análises", df['credits'].sum() if 'credits' in df.columns else 0)
+        
+        st.divider()
+        c_search, c_clear = st.columns([0.8, 0.2])
+        search_term = c_search.text_input("🔍 Pesquisar", placeholder="Nome ou Email...")
+        
+        if search_term:
+            mask = df['username'].astype(str).str.contains(search_term, case=False) | \
+                   df['name'].astype(str).str.contains(search_term, case=False)
+            df_display = df[mask]
+        else:
+            df_display = df
+
+        st.subheader("Base de Usuários")
+        edited_df = st.data_editor(
+            df_display,
+            column_config={
+                "username": st.column_config.TextColumn("Usuário", disabled=True),
+                "credits": st.column_config.NumberColumn("Usados", disabled=True),
+                "plan": st.column_config.SelectboxColumn("Plano", options=['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited'], required=True)
+            },
+            hide_index=True, use_container_width=True, key="users_editor"
+        )
+
+        if st.button("💾 Salvar Planos"):
+            count = 0
+            for i, row in edited_df.iterrows():
+                orig = df[df['username']==row['username']].iloc[0]
+                if orig['plan'] != row['plan']:
+                    db.admin_update_plan(row['username'], row['plan']); count+=1
+            if count: st.success(f"{count} atualizados!"); time.sleep(1); st.rerun()
+
+        st.divider()
+        st.subheader("🛠️ Gestão Individual")
+        col_sel, col_act = st.columns([0.4, 0.6])
+        with col_sel:
+            sel_user = st.selectbox("Editar Usuário:", options=df_display['username'].tolist())
+            if sel_user:
+                u_info = df[df['username'] == sel_user].iloc[0]
+                st.info(f"Plano: {u_info['plan']} | Usados: {u_info['credits']}")
+        with col_act:
+            if sel_user:
+                with st.form("edit_cred"):
+                    nc = st.number_input("Definir 'Créditos Usados':", min_value=0, value=int(u_info['credits']))
+                    np = st.selectbox("Plano:", ['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited'], index=['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited'].index(u_info['plan']))
+                    if st.form_submit_button("✅ Atualizar"):
+                        db.admin_set_credits_used(sel_user, nc)
+                        db.admin_update_plan(sel_user, np)
+                        st.toast("Atualizado!"); time.sleep(1); st.rerun()
+                if st.button("🔄 Resetar Créditos (Zero)"):
+                    db.admin_set_credits_used(sel_user, 0)
+                    st.toast("Resetado!"); time.sleep(1); st.rerun()
+        st.divider()
+        st.subheader("📧 Central de Notificações")
+        
+        col_test, col_run = st.columns(2)
+        
+        with col_test:
+            st.markdown("#### Teste de SMTP")
+            test_email = st.text_input("E-mail para teste", value=st.session_state.user['email'] if st.session_state.user.get('email') else "")
+            if st.button("📨 Enviar E-mail de Teste"):
+                if test_email:
+                    with st.spinner("Conectando ao Zoho..."):
+                        ok, msg = db.send_email(
+                            test_email, 
+                            "Teste de SMTP - Urbano", 
+                            "<h1>Funciona!</h1><p>Seu sistema de e-mail está configurado corretamente.</p>"
+                        )
+                        if ok: st.success(msg)
+                        else: st.error(msg)
+                else:
+                    st.warning("Preencha um e-mail.")
+
+        with col_run:
+            st.markdown("#### Disparo Manual de Avisos")
+            st.caption("Verifica todos os editais 'Verdes' de todos os clientes. Se a data for daqui a 2 dias úteis, envia o e-mail.")
+            if st.button("🚀 Rodar Verificação de Prazos"):
+                with st.spinner("Verificando datas e enviando e-mails..."):
+                    log = db.check_deadlines_and_notify()
+                    st.text_area("Log de Execução", value=log, height=200)
+
+        st.divider()            
+
+# 2. DOCUMENTOS
+elif menu == "📂 Documentos da Empresa":
+    st.title("📂 Acervo Digital")
+    st.info("Estes documentos serão usados para o Cruzamento Automático.")
+    with st.expander("⬆️ Upload", expanded=False):
+        c1, c2 = st.columns(2)
+        s = c1.selectbox("Pasta", list(DOC_STRUCTURE.keys()))
+        t = c2.selectbox("Tipo", DOC_STRUCTURE[s])
+        f = st.file_uploader("Arquivo PDF", type=["pdf"])
+        if f and st.button("Salvar na Nuvem"):
+            with st.spinner("Enviando..."):
+                safe = re.sub(r'[\\/*?:"<>|]', "", f.name)
+                if db.upload_file_to_storage(f.getvalue(), safe, user['username'], s, t):
+                    st.success("Salvo!"); time.sleep(1); st.rerun()
+                else: st.error("Erro upload.")
+    
+    st.divider()
+    for sec, types in DOC_STRUCTURE.items():
+        st.markdown(f"**{sec}**")
+        cols = st.columns(3)
+        for i, t in enumerate(types):
+            with cols[i%3]:
+                files = db.list_files_from_storage(user['username'], sec, t)
+                with st.expander(f"{t} ({len(files)})"):
+                    for file in files:
+                        c_tx, c_del = st.columns([0.8, 0.2])
+                        c_tx.caption(file[:20]+"...")
+                        if c_del.button("🗑️", key=f"d_{file}"):
+                            db.delete_file_from_storage(file, user['username'], sec, t); st.rerun()
+
+# 3. ANÁLISE
+elif menu == "Análise de Editais":
+    st.title("🔍 Analisar Novo Edital")
+    
+    if st.session_state.analise_atual:
+        if st.button("🔄 Nova Análise"):
+            st.session_state.analise_atual = None
+            st.session_state.gemini_files_handles = []
+            st.session_state.chat_history = []
+            st.session_state.last_analysis_id = None
+            st.rerun()
+    
+    if not st.session_state.analise_atual:
+        if user['credits'] >= limit: st.warning("Limite atingido."); st.stop()
+        
+        ups = st.file_uploader("Upload Edital + Anexos", type=["pdf"], accept_multiple_files=True)
+        if ups and st.button("🚀 Iniciar Auditoria IA"):
+            with st.status("Processando...", expanded=True) as status:
+                try:
+                    status.write("Validando plano...")
+                    if not db.consume_credit_atomic(user['username']): st.error("Erro crédito"); st.stop()
+                    
+                    status.write(f"Lendo {len(ups)} arquivos...")
+                    files_ai = []; temps = []
+                    for up in ups:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                            tmp.write(up.getvalue()); tmp_path = tmp.name; temps.append(tmp_path)
+                        files_ai.append(genai.upload_file(tmp_path, display_name=up.name))
+                    st.session_state.gemini_files_handles = files_ai
+                    
+                    status.write("Gerando Relatório Detalhado (14 Pontos)...")
+                    model = genai.GenerativeModel('gemini-pro-latest')
+                    prompt = """
+                    ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA.
+                    Analise TODOS os documentos fornecidos (Edital e Anexos) com extremo rigor.
+                    Responda pontualmente às 16 questões abaixo. Use Markdown para formatar.
+
+                    Ao responder as questões dos 16 pontos do prompt inicial, não há necessidade de apresentar o texto das perguntas de forma literal como estão escritas. A IA pode proceder de maneira mais didática nas perguntas, mas precisa manter as respostas à tais questões.
+
+
+                    1. Qual o nome do órgão contratante?
+                    2. Qual o objeto do edital? (Resumo completo)
+                    3. Qual o valor estimado para a realização dos serviços?
+                    4. Qual a plataforma onde será realizado o certame?
+                    5. Qual a data de realização do certame e até quando é possível enviar a proposta?
+                    6. **CRONOGRAMA**: Datas e Prazos.
+                    7. **HABILITAÇÃO JURÍDICA/FISCAL**: Exigências.
+                    8. **FINANCEIRO**: Índices (LG, SG, LC) e valores.
+                    9. Quais as exigências para qualificação técnica deste certame? (Esmiuce com detalhes, incluindo apresentação de declarações e demais documentos exigidos)
+                    10. Elenque TODOS os profissionais exigidos pelo edital e também a experiência necessária.
+                    11. Não oculte nenhuma exigência técnica, por mais simples que pareça.
+                    12. É exigida algum tipo de garantia? Se sim, quais?
+                    13. Qual o entendimento do edital acerca de propostas com descontos acima de 25% do valor global?
+                    14. Qual o formato e o período destinado para a fase de lances?
+                    15. O que o edital versa sobre identificação da empresa no envio da documentação ou proposta?
+                    16. Analise os riscos envolvidos na participação da empresa nesse serviço.
+                    """
+                    resp = model.generate_content(files_ai + [prompt])
+                    st.session_state.analise_atual = resp.text
+                    
+                    title = extract_title(resp.text)
+                    new_doc_id = db.save_analysis_history(user['username'], title, resp.text)
+                    st.session_state.last_analysis_id = new_doc_id
+                    
+                    status.update(label="Pronto!", state="complete", expanded=False)
+                    for p in temps: os.remove(p)
+                    st.rerun()
+                except Exception as e:
+                    db.refund_credit_atomic(user['username'])
+                    st.error(f"Erro: {e}. Crédito devolvido.")
+    else:
+        if st.session_state.last_analysis_id:
+            st.info("Classifique este edital para organizá-lo no Histórico e Calendário:")
+            render_status_controls(st.session_state.last_analysis_id, None, "")
+            st.divider()
+
+        st.markdown(st.session_state.analise_atual)
+        st.divider()
+        
+        st.subheader("🚀 Cruzamento de Dados")
+        if user['plan'] == 'free': st.info("🔒 Upgrade necessário.")
+        else:
+            if st.button("Verificar Minha Viabilidade"):
+                with st.spinner("Comparando documentos..."):
+                    c_files = db.get_all_company_files_as_bytes(user['username'])
+                    if not c_files: st.warning("Sem docs da empresa.")
+                    else:
+                        temps = []
+                        for n, d in c_files:
+                            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as t:
+                                t.write(d); tp = t.name
+                            temps.append(genai.upload_file(tp, display_name=n)); os.remove(tp)
+                        
+                        prompt = "Checklist de Viabilidade: Edital vs Empresa. Para cada item: Edital pede X -> Empresa tem Y -> Veredito."
+                        model = genai.GenerativeModel('gemini-pro-latest')
+                        resp = model.generate_content(st.session_state.gemini_files_handles + temps + [prompt])
+                        st.session_state.analise_atual += "\n\n---\n\n# 🛡️ VIABILIDADE\n" + resp.text
+                        st.rerun()
+        
+        st.divider()
+        st.subheader("💬 Chat")
+        for r, t in st.session_state.chat_history:
+            with st.chat_message(r): st.markdown(t)
+        if q := st.chat_input("Dúvida?"):
+            st.session_state.chat_history.append(("user", q))
+            with st.chat_message("user"): st.markdown(q)
+            with st.chat_message("assistant"):
+                with st.spinner("..."):
+                    try:
+                        m = genai.GenerativeModel('gemini-pro-latest')
+                        res = m.generate_content(st.session_state.gemini_files_handles + [f"Responda baseado no edital: {q}"])
+                        st.markdown(res.text)
+                        st.session_state.chat_history.append(("assistant", res.text))
+                    except: st.error("Erro IA.")
+
+        st.divider()
+        if st.button("📄 Baixar PDF Completo"):
+            with st.spinner("Gerando PDF..."):
+                content = st.session_state.analise_atual
+                if st.session_state.chat_history:
+                    content += "\n\n<div class='chat-section'><h1>💬 Histórico de Dúvidas</h1>"
+                    for r, t in st.session_state.chat_history:
+                        content += f"<p class='chat-q'>{r.upper()}: {t}</p>"
+                    content += "</div>"
+                pdf = convert_to_pdf(content)
+                if pdf: st.download_button("⬇️ Download PDF", data=pdf, file_name=f"Analise_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
+                else: st.error("Erro PDF.")
+
+# 4. HISTÓRICO
+elif menu == "📜 Histórico":
+    st.title("Biblioteca de Análises")
+    lst = db.get_user_history_list(user['username'])
+    if not lst: st.info("Vazio.")
+    for item in lst:
+        chat_key = f"hist_chat_{item['id']}"
+        if chat_key not in st.session_state: st.session_state[chat_key] = []
+        dt = item['created_at'].strftime("%d/%m/%Y")
+        
+        raw_title = extract_title(item['content'])
+        status = item.get('status')
+        
+        display_title = raw_title
+        if status == 'red': display_title = f":red[{raw_title}]"
+        elif status == 'yellow': display_title = f":orange[{raw_title}]"
+        elif status == 'green': display_title = f"**:green[{raw_title}]**"
+        
+        with st.expander(f"📅 {dt} | {display_title}"):
+            render_status_controls(item['id'], status, item.get('note', ''))
+            st.divider()
+            
+            st.markdown(item['content'])
+            
+            c1, c2 = st.columns([0.8, 0.2])
+            with c1:
+                pdf = convert_to_pdf(item['content'])
+                if pdf: st.download_button("📄 PDF", data=pdf, file_name=f"Relatorio_{item['id'][:6]}.pdf")
+            with c2:
+                if st.button("🗑️", key=f"d_{item['id']}"):
+                    db.delete_history_item(user['username'], item['id']); st.rerun()
+            
+            st.markdown("---")
+            st.subheader("💬 Dúvidas (Histórico)")
+            for r, t in st.session_state[chat_key]:
+                with st.chat_message(r): st.markdown(t)
+            if q := st.chat_input("Pergunta...", key=f"in_{item['id']}"):
+                st.session_state[chat_key].append(("user", q))
+                with st.chat_message("user"): st.markdown(q)
+                with st.chat_message("assistant"):
+                    with st.spinner("..."):
+                        try:
+                            m = genai.GenerativeModel('gemini-pro-latest')
+                            res = m.generate_content(f"Contexto: {item['content']}\nPergunta: {q}")
+                            st.markdown(res.text)
+                            st.session_state[chat_key].append(("assistant", res.text))
+                        except: st.error("Erro.")
+
+# 5. CALENDÁRIO (CORRIGIDO: INTERAÇÃO POR CLIQUE)
+elif menu == "📅 Calendário":
+    st.title("📅 Calendário de Licitações")
+    st.caption("Apenas editais marcados como 'Apto' (Verde).")
+    st.info("💡 Clique em uma barra verde para ver os detalhes abaixo.")
+    
+    lst = db.get_user_history_list(user['username'])
+    events = []
+    
+    for item in lst:
+        if item.get('status') == 'green':
+            full_title = extract_title(item['content'])
+            date_iso = extract_date_for_calendar(full_title)
+            
+            if date_iso:
+                try:
+                    obj_short = full_title.split('|')[1].strip()
+                except:
+                    obj_short = "Licitação"
+                
+                events.append({
+                    "title": obj_short,
+                    "start": date_iso,
+                    "backgroundColor": "#28a745",
+                    "borderColor": "#28a745",
+                    # Guardamos o título completo para exibir no clique
+                    "extendedProps": {
+                        "description": full_title
+                    }
+                })
+    
+    if not events:
+        st.info("Nenhum edital verde com data encontrada.")
+    else:
+        # Configuração do Calendário
+        calendar_options = {
+            "headerToolbar": {"left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth"},
+            "initialView": "dayGridMonth",
+            "locale": "pt-br"
+        }
+        
+        # 1. Renderiza e Captura o Estado
+        cal_state = calendar(
+            events=events,
+            options=calendar_options,
+            custom_css=".fc-event-title { white-space: normal !important; cursor: pointer !important; }",
+            key="cal_licita"
+        )
+        
+        # 2. Verifica se houve clique
+        if cal_state.get("eventClick"):
+            clicked_event = cal_state["eventClick"]["event"]
+            
+            # Recupera dados
+            title_clk = clicked_event.get("title", "Sem título")
+            desc_clk = clicked_event.get("extendedProps", {}).get("description", "Sem descrição.")
+            
+            st.divider()
+            st.subheader(f"📌 Detalhes: {title_clk}")
+            st.info(desc_clk)
+            st.caption("Vá na aba 'Histórico' para ver a análise completa.")
+
+# 6. ASSINATURA
+elif menu == "Assinatura":
+    st.title("💎 Planos")
+    st.info(f"Plano Atual: **{user['plan'].upper()}**")
+    cols = st.columns(4)
+    plans = [("🥉 Plano 15", "15 Editais", "R$ 39,90"), ("🥈 Plano 30", "30 Editais", "R$ 69,90"), 
+             ("🥇 Plano 60", "60 Editais", "R$ 109,90"), ("💎 Plano 90", "90 Editais", "R$ 149,90")]
+    for i, (n, q, v) in enumerate(plans):
+        with cols[i]:
+            st.markdown(f"### {n}\n**{q}**\n### {v}"); st.button(f"Assinar {n}", key=f"b_{i}")
+    st.markdown("---"); st.caption("Envie comprovante para o Suporte.")
