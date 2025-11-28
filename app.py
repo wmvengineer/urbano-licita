@@ -811,7 +811,65 @@ elif menu == "Análise de Editais":
 elif menu == "📜 Histórico":
     st.title("Biblioteca de Análises")
     lst = db.get_user_history_list(user['username'])
-    if not lst: st.info("Vazio.")
+    
+    if not lst: 
+        st.info("Vazio.")
+    else:
+        # --- NOVA FUNÇÃO: EXCLUSÃO EM MASSA ---
+        with st.expander("🗑️ Gerenciar / Excluir Vários"):
+            st.caption("Selecione os itens que deseja excluir permanentemente e clique no botão abaixo.")
+            
+            # Prepara os dados para a tabela
+            table_data = []
+            for item in lst:
+                raw_t = extract_title(item['content'])
+                d_str = item['created_at'].strftime("%d/%m/%Y")
+                table_data.append({
+                    "id": item['id'],
+                    "Excluir": False,
+                    "Data": d_str,
+                    "Título": raw_t
+                })
+            
+            df_hist = pd.DataFrame(table_data)
+            
+            # Exibe a tabela editável
+            edited_df = st.data_editor(
+                df_hist,
+                column_config={
+                    "id": None, # Oculta o ID visualmente
+                    "Excluir": st.column_config.CheckboxColumn("Selecionar", default=False, width="small"),
+                    "Data": st.column_config.TextColumn("Data", disabled=True, width="small"),
+                    "Título": st.column_config.TextColumn("Edital", disabled=True, width="large")
+                },
+                hide_index=True,
+                use_container_width=True,
+                key="editor_mass_delete"
+            )
+            
+            # Botão de Ação
+            if st.button("🗑️ Excluir Selecionados", type="primary"):
+                selected_rows = edited_df[edited_df["Excluir"] == True]
+                
+                if not selected_rows.empty:
+                    count_del = 0
+                    with st.spinner("Excluindo itens..."):
+                        for index, row in selected_rows.iterrows():
+                            if db.delete_history_item(user['username'], row['id']):
+                                count_del += 1
+                    
+                    if count_del > 0:
+                        st.success(f"{count_del} análises excluídas com sucesso!")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("Erro ao tentar excluir os itens.")
+                else:
+                    st.warning("Nenhum item selecionado.")
+        
+        st.divider()
+
+    # --- LISTAGEM PADRÃO (CÓDIGO ORIGINAL MANTIDO) ---
     for item in lst:
         chat_key = f"hist_chat_{item['id']}"
         if chat_key not in st.session_state: st.session_state[chat_key] = []
