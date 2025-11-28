@@ -469,12 +469,29 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 with st.sidebar:
-    # LOGO INSERIDA (250px)
-    if os.path.exists("LOGO URBANO OFICIAL.png"):
-        st.image("LOGO URBANO OFICIAL.png", width=250)
+    # LOGO EM CÍRCULO BRANCO (250px container / 150px logo)
+    img_b64_side = get_base64_image("LOGO URBANO OFICIAL.png")
+    if img_b64_side:
+        st.markdown(f"""
+            <div style="display: flex; justify-content: center; margin-bottom: 20px;">
+                <div style="
+                    width: 250px;
+                    height: 250px;
+                    background-color: white;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    overflow: hidden;
+                    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+                ">
+                    <img src="data:image/png;base64,{img_b64_side}" style="width: 150px; height: auto; object-fit: contain;">
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
     else:
-        # Fallback caso a imagem não seja encontrada, mantém ícone
-        st.markdown("<div style='font-size: 100px; text-align: center;'>🏢</div>", unsafe_allow_html=True)
+        # Fallback
+        st.markdown("<div style='font-size: 80px; text-align: center; color: white;'>🏢</div>", unsafe_allow_html=True)
 
     st.markdown(f"### Olá, {user['name']}")
     st.caption(f"Plano: **{user['plan'].upper()}**")
