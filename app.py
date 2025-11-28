@@ -456,8 +456,8 @@ elif menu == "Análise de Editais":
                 position: absolute;
                 left: 0;
                 top: 0;
-                width: 100%;
-                height: 100%;
+                width: 80%;
+                height: 80%;
                 display: flex;
                 align_items: center;
                 justify_content: center;
