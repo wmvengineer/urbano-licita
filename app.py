@@ -475,8 +475,8 @@ with st.sidebar:
         st.markdown(f"""
             <div style="display: flex; justify-content: center; margin-bottom: 20px;">
                 <div style="
-                    width: 250px;
-                    height: 250px;
+                    width: 200px;
+                    height: 200px;
                     background-color: white;
                     border-radius: 50%;
                     display: flex;
