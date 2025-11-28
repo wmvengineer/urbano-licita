@@ -2,29 +2,36 @@ name: Disparo Diario de Emails
 
 on:
   schedule:
-    # 09:00 UTC = 06:00 da manhã no Brasil
-    - cron: '0 9 * * *'
-  workflow_dispatch: # Permite rodar manualmente clicando num botão
+    - cron: '0 11 * * *'
+    - cron: '0 19 * * *'
+  workflow_dispatch:
 
 jobs:
   run-scheduler:
     runs-on: ubuntu-latest
+
     steps:
       - name: Baixar código
         uses: actions/checkout@v3
 
-      - name: Instalar Python
+      - name: Configurar Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
-      - name: Instalar Bibliotecas
-        run: pip install -r requirements.txt
+      - name: INSTALAÇÃO LEVE (SEM PDF) - VERSÃO FINAL
+        # Mudei o nome acima para você conferir no log se atualizou
+        run: |
+          python -m pip install --upgrade pip
+          # Instalamos MANUALMENTE apenas o que o robô precisa.
+          # NUNCA use 'pip install -r requirements.txt' aqui se ele tiver xhtml2pdf.
+          pip install streamlit firebase-admin google-generativeai pandas bcrypt toml
 
-      - name: Rodar Script
+      - name: Executar Script
         env:
-          # Estas variáveis virão dos Secrets do GitHub
           FIREBASE_KEY_JSON: ${{ secrets.FIREBASE_KEY_JSON }}
           EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-        run: python scheduler.py
+        run: |
+          python scheduler.py
+# Atualizacao Forcada
