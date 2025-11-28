@@ -709,7 +709,7 @@ elif menu == "Análise de Editais":
                         files_ai.append(genai.upload_file(tmp_path, display_name=up.name))
                     st.session_state.gemini_files_handles = files_ai
                     
-                    status.write("Gerando Relatório Detalhado (14 Pontos)...")
+                    status.write("Gerando Relatório Detalhado...")
                     model = genai.GenerativeModel('gemini-pro-latest')
                     
                     prompt = """
@@ -721,7 +721,7 @@ elif menu == "Análise de Editais":
                     2. Qual o objeto do edital? (Resumo completo)
                     3. Qual o valor estimado para a realização dos serviços?
                     4. Qual a plataforma onde será realizado o certame?
-                    5. DATA_CHAVE: [DD/MM/YYYY] - Qual a data de realização do certame? (Inicie sua resposta EXATAMENTE com "DATA_CHAVE: DD/MM/YYYY". Se não houver sessão física, coloque a data limite de propostas neste formato).
+                    5. Qual a data de realização do certame? (Inicie sua resposta EXATAMENTE com "DATA_CHAVE: DD/MM/YYYY". Se não houver sessão física, coloque a data limite de propostas neste formato).
                     6. **CRONOGRAMA**: Datas e Prazos.
                     7. **HABILITAÇÃO JURÍDICA/FISCAL**: Exigências.
                     8. **FINANCEIRO**: Índices (LG, SG, LC) e valores.
