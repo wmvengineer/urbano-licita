@@ -9,14 +9,16 @@ from datetime import datetime, timedelta
 import database as db
 import extra_streamlit_components as stx
 from io import BytesIO
-import random  # <--- NOVA IMPORTAÇÃO PARA O CAPTCHA
+import random
+import base64 
 
 # --- LIBS PARA PDF E CALENDÁRIO ---
 from xhtml2pdf import pisa
 import markdown
 from streamlit_calendar import calendar
 
-# --- CONFIGURAÇÃO (ATUALIZADA) ---
+# --- CONFIGURAÇÃO ---
+# Define o ícone da página (Favicon)
 icon_file = "LOGO URBANO OFICIAL.png" if os.path.exists("LOGO URBANO OFICIAL.png") else "🏢"
 st.set_page_config(page_title="Urbano", layout="wide", page_icon=icon_file)
 
@@ -25,7 +27,6 @@ try:
     if "GOOGLE_API_KEY" in st.secrets:
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     else:
-        # Fallback local se necessário
         pass
 except:
     st.error("Configure a API Key.")
@@ -51,6 +52,13 @@ DOC_STRUCTURE = {
 
 # --- FUNÇÕES AUXILIARES ---
 
+def get_base64_image(image_path):
+    """Converte imagem local para base64 para uso em HTML."""
+    if os.path.exists(image_path):
+        with open(image_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode()
+    return None
+
 def convert_to_pdf(source_md):
     """Converte Markdown para PDF com estilo profissional."""
     html_text = markdown.markdown(source_md)
@@ -75,71 +83,53 @@ def convert_to_pdf(source_md):
     return result_file.getvalue()
 
 def extract_title(text):
-    """
-    Extrai título no padrão: "Edital" + "Órgão" + "Data de Abertura/Limite"
-    Usa a tag DATA_CHAVE inserida via Prompt para garantir precisão.
-    """
     try:
-        # 1. Extração do Órgão
         orgao = "Órgão Indefinido"
         match_orgao = re.search(r"(?:1\.|órgão).*?[:\-\?]\s*(.*?)(?:\n|2\.|Qual|$)", text, re.IGNORECASE)
         if match_orgao: 
             orgao = match_orgao.group(1).replace("*", "").strip()
 
-        # 2. Extração da Data (Busca pela tag forçada no prompt)
         data_sessao = "Data Pendente"
         match_data_tag = re.search(r"DATA_CHAVE:\s*(\d{2}/\d{2}/\d{4})", text)
         
         if match_data_tag:
             data_sessao = match_data_tag.group(1)
         else:
-            # Fallback: Procura qualquer data na resposta da pergunta 5
             match_q5 = re.search(r"5\.(.*?)(?:6\.|CRONOGRAMA|\n\n|$)", text, re.DOTALL | re.IGNORECASE)
             if match_q5:
                 match_generic = re.search(r"(\d{2}/\d{2}/\d{4})", match_q5.group(1))
                 if match_generic: data_sessao = match_generic.group(1)
 
-        # Retorna no padrão solicitado para o Histórico
         return f"Edital {orgao} | {data_sessao}"
     except:
         return f"Edital Processado em {datetime.now().strftime('%d/%m/%Y')}"
 
 def extract_date_for_calendar(title_str):
-    """Extrai YYYY-MM-DD do título para o componente de calendário."""
     try:
         match = re.search(r"(\d{2})/(\d{2})/(\d{4})", title_str)
         if match:
-            # Retorna YYYY-MM-DD
             return f"{match.group(3)}-{match.group(2)}-{match.group(1)}"
     except: pass
     return None
 
 def render_status_controls(item_id, current_status, current_note):
-    """Renderiza os controles de status (Checks Coloridos) e salva no banco."""
     st.caption("Classificação do Edital (Marque uma opção):")
     c1, c2, c3 = st.columns([0.15, 0.15, 0.7])
     
-    # Checkboxes agindo como Radio Buttons manuais
     is_red = c1.checkbox("🟥 Inviável", value=(current_status=='red'), key=f"r_{item_id}")
     is_yellow = c2.checkbox("🟨 Ajustes", value=(current_status=='yellow'), key=f"y_{item_id}")
     is_green = c3.checkbox("🟩 Apto", value=(current_status=='green'), key=f"g_{item_id}")
 
     new_status = current_status
-    
-    # Lógica de seleção única
     if is_red and current_status != 'red': new_status = 'red'
     elif is_yellow and current_status != 'yellow': new_status = 'yellow'
     elif is_green and current_status != 'green': new_status = 'green'
-    
-    # Se desmarcar o atual, volta para None
     if not is_red and not is_yellow and not is_green: new_status = None
 
-    # Lógica de atualização (se mudou, salva e recarrega para atualizar checks)
     if new_status != current_status:
         db.update_analysis_status(st.session_state.user['username'], item_id, new_status, current_note)
         st.rerun()
 
-    # Caixa de Texto Condicional para Observação
     if new_status:
         placeholder_text = ""
         if new_status == 'red': placeholder_text = "Descreva os motivos da inviabilidade..."
@@ -181,13 +171,10 @@ def logout():
 
 # --- TELA DE LOGIN (Redesign V3) ---
 if not st.session_state.user:
-    # Injeção de CSS para replicar o estilo Login V3
     st.markdown("""
         <style>
-        /* Importando Fonte Poppins */
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&display=swap');
 
-        /* Fundo da Página (Imagem de Fundo) */
         .stApp {
             background-image: url('https://colorlib.com/etc/lf/Login_v3/images/bg-01.jpg');
             background-size: cover;
@@ -196,7 +183,6 @@ if not st.session_state.user:
             font-family: 'Poppins', sans-serif;
         }
 
-        /* Ocultar elementos padrão do Streamlit para limpar a tela */
         header {visibility: hidden;}
         footer {visibility: hidden;}
         .block-container {
@@ -204,21 +190,17 @@ if not st.session_state.user:
             padding-bottom: 5rem;
         }
 
-        /* Container Principal do Formulário (Mimica .wrap-login100) */
         div[data-testid="stForm"] {
             border-radius: 10px;
             padding: 55px 55px 37px 55px;
             overflow: hidden;
             background: #20404F;
             background: -webkit-linear-gradient(top, #394E53, #173a50);
-            background: -o-linear-gradient(top, #394E53, #173a50);
-            background: -moz-linear-gradient(top, #394E53, #173a50);
             background: linear-gradient(top, #394E53, #173a50);
             box-shadow: 0 5px 15px rgba(0,0,0,0.3);
             border: none;
         }
 
-        /* Estilização dos Inputs (Linha inferior, texto branco) */
         div[data-testid="stTextInput"] label, div[data-testid="stNumberInput"] label {
             color: #eeeeee !important;
             font-family: 'Poppins', sans-serif;
@@ -240,7 +222,7 @@ if not st.session_state.user:
             box-shadow: none !important;
         }
 
-        /* Estilização do Botão (Arredondado, branco/hover escuro) */
+        /* Botões Gerais do Formulário */
         div.stButton > button {
             font-family: 'Poppins', sans-serif;
             font-size: 16px;
@@ -264,32 +246,43 @@ if not st.session_state.user:
             background-color: #333 !important;
             color: #fff !important;
         }
-        div.stButton > button:active {
-            background-color: #333 !important;
-            color: #fff !important;
-        }
 
-        /* Abas (Login/Cadastro) customizadas para o fundo roxo */
+        /* --- ESTILO ESPECÍFICO PEDIDO NO PROMPT --- */
+        
+        /* 1. Abas Visíveis e Arredondadas */
         .stTabs [data-baseweb="tab-list"] {
-            gap: 20px;
+            gap: 10px;
             justify-content: center;
             margin-bottom: 20px;
-            border-bottom: 1px solid rgba(255,255,255,0.2);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
         }
         .stTabs [data-baseweb="tab"] {
-            color: rgba(255,255,255,0.6);
+            background-color: rgba(255, 255, 255, 0.15); /* Fundo sutil */
+            color: #fff !important; /* Texto Branco */
             font-family: 'Poppins', sans-serif;
-            font-size: 16px;
+            font-size: 14px;
             border: none;
-            background-color: transparent;
+            border-radius: 15px 15px 0 0; /* Arredondado em cima */
+            padding: 10px 20px;
+            margin-right: 2px;
+            transition: all 0.3s;
         }
         .stTabs [aria-selected="true"] {
-            color: #fff !important;
+            background-color: rgba(255, 255, 255, 0.35); /* Mais claro selecionado */
             font-weight: bold;
-            border-bottom: 2px solid #fff;
         }
         .stTabs [data-baseweb="tab-highlight"] {
-            background-color: #fff;
+            background-color: transparent; /* Remove linha padrão do Streamlit */
+        }
+
+        /* 2. Botão Recuperar Senha (#babac2) */
+        /* Seleciona o botão na segunda coluna do formulário de login */
+        [data-testid="stForm"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:nth-of-type(2) button {
+            background-color: #babac2 !important;
+            color: #fff !important;
+        }
+        [data-testid="stForm"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:nth-of-type(2) button:hover {
+            background-color: #9a9a9f !important;
         }
 
         /* Alerts */
@@ -298,58 +291,86 @@ if not st.session_state.user:
             border-radius: 10px;
         }
         
-        /* Centralizar colunas */
         [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
             align-items: center;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    # Centralização do Card de Login usando colunas
     col_spacer_l, col_login, col_spacer_r = st.columns([1, 1.5, 1])
     
     with col_login:
+        # Carrega imagem em Base64 para HTML
+        img_b64 = get_base64_image("LOGO URBANO OFICIAL.png")
+        img_src = f"data:image/png;base64,{img_b64}" if img_b64 else ""
+
         # Cabeçalho Visual (Logo e Título)
-        st.markdown("""
+        if img_src:
+            html_logo = f"""
             <div style="text-align: center; margin-bottom: 30px;">
                 <div style="
-                    font-size: 50px;
-                    color: #333;
                     display: flex;
                     justify-content: center;
                     align-items: center;
-                    width: 100px;
-                    height: 100px;
+                    width: 120px;
+                    height: 120px;
                     border-radius: 50%;
                     background-color: #fff;
                     margin: 0 auto;
+                    overflow: hidden;
                 ">
-                    🏢
+                    <img src="{img_src}" style="width: 100%; height: auto; object-fit: cover;" />
                 </div>
-                <h1 style="color: white; font-family: 'Poppins'; text-transform: uppercase; margin-top: 20px; font-size: 28px; font-weight: 500;">
-                    Urbano
-                </h1>
+                <!-- TEXTO REMOVIDO CONFORME SOLICITADO -->
             </div>
-        """, unsafe_allow_html=True)
+            """
+        else:
+            # Fallback se a imagem não existir
+            html_logo = """<div style="text-align: center; margin-bottom: 30px; font-size: 50px;">🏢</div>"""
+
+        st.markdown(html_logo, unsafe_allow_html=True)
 
         t1, t2 = st.tabs(["ENTRAR", "CRIAR CONTA"])
         
         # --- ABA LOGIN ---
         with t1:
             with st.form("f_login"):
-                u = st.text_input("Usuário", placeholder="Digite seu usuário")
+                u = st.text_input("Usuário ou E-mail", placeholder="Digite seu usuário ou e-mail")
                 p = st.text_input("Senha", type="password", placeholder="Digite sua senha")
                 
                 # eCaptcha Login
                 if 'log_n1' not in st.session_state: st.session_state.log_n1 = random.randint(1, 9)
                 if 'log_n2' not in st.session_state: st.session_state.log_n2 = random.randint(1, 9)
                 
-                # Layout compacto para o Captcha
                 st.markdown(f"<p style='color: white; font-size: 12px; margin-bottom: 0px; margin-top: 15px;'>Segurança: Quanto é {st.session_state.log_n1} + {st.session_state.log_n2}?</p>", unsafe_allow_html=True)
                 captcha_ans = st.number_input("Resultado Captcha", step=1, label_visibility="collapsed", key="in_cap_log")
 
-                if st.form_submit_button("LOGIN"):
-                    # Validação Captcha
+                # Layout de Botões Lado a Lado
+                c_btn_log, c_btn_rec = st.columns(2)
+                
+                with c_btn_log:
+                    submitted_login = st.form_submit_button("LOGIN")
+                with c_btn_rec:
+                    submitted_recover = st.form_submit_button("RECUPERAR")
+
+                if submitted_recover:
+                    # Lógica de Recuperação
+                    if not u or "@" not in u:
+                        st.warning("Para recuperar sua senha, digite seu E-MAIL no campo 'Usuário ou E-mail' acima e clique em Recuperar novamente.")
+                        st.session_state.log_n1 = random.randint(1, 9) # Reset Captcha
+                    else:
+                        real_ans = st.session_state.log_n1 + st.session_state.log_n2
+                        if captcha_ans != real_ans:
+                            st.error("Captcha incorreto.")
+                        else:
+                            with st.spinner("Enviando senha temporária..."):
+                                ok, msg = db.recover_user_password(u)
+                                if ok: st.success(msg)
+                                else: st.error(msg)
+                                time.sleep(2) # Dar tempo de ler
+
+                elif submitted_login:
+                    # Lógica de Login
                     real_ans = st.session_state.log_n1 + st.session_state.log_n2
                     if captcha_ans != real_ans:
                         st.error("eCaptcha incorreto.")
@@ -567,17 +588,14 @@ elif menu == "Análise de Editais":
     if not st.session_state.analise_atual:
         if user['credits'] >= limit: st.warning("Limite atingido."); st.stop()
         
-        # [MODIFICAÇÃO] CSS para traduzir o File Uploader (Instruções + Botão "Browse files")
         st.markdown("""
             <style>
-            /* Esconde textos originais de instrução */
             [data-testid='stFileUploaderDropzoneInstructions'] > div > span {
                 display: none;
             }
             [data-testid='stFileUploaderDropzoneInstructions'] > div > small {
                 display: none;
             }
-            /* Insere texto traduzido de instrução */
             [data-testid='stFileUploaderDropzoneInstructions'] > div::after {
                 content: "Arraste e solte arquivos aqui \\A Limite 25MB por arquivo • PDF";
                 white-space: pre-wrap;
@@ -586,16 +604,14 @@ elif menu == "Análise de Editais":
                 color: rgba(49, 51, 63, 0.6);
                 font-size: 14px;
             }
-            
-            /* Tradução do Botão "Browse files" */
             [data-testid='stFileUploader'] button {
-                color: transparent !important; /* Oculta texto original */
+                color: transparent !important;
                 position: relative;
-                min-width: 180px; /* Garante tamanho para o texto em PT */
+                min-width: 180px;
             }
             [data-testid='stFileUploader'] button::after {
                 content: "Procurar arquivos";
-                color: rgb(49, 51, 63); /* Cor original do texto */
+                color: rgb(49, 51, 63);
                 font-size: 14px;
                 position: absolute;
                 left: 0;
@@ -603,8 +619,8 @@ elif menu == "Análise de Editais":
                 width: 100%;
                 height: 100%;
                 display: flex;
-                align-items: center;    /* Sintaxe corrigida para centralizar verticalmente */
-                justify-content: center; /* Sintaxe corrigida para centralizar horizontalmente */
+                align-items: center;
+                justify-content: center;
                 pointer-events: none;
             }
             </style>
@@ -612,7 +628,6 @@ elif menu == "Análise de Editais":
 
         ups = st.file_uploader("Upload Edital + Anexos", type=["pdf"], accept_multiple_files=True)
         
-        # [MODIFICAÇÃO] Validação de Tamanho (25MB)
         valid_files = []
         if ups:
             for up in ups:
@@ -639,7 +654,6 @@ elif menu == "Análise de Editais":
                     status.write("Gerando Relatório Detalhado (14 Pontos)...")
                     model = genai.GenerativeModel('gemini-pro-latest')
                     
-                    # PROMPT
                     prompt = """
                     ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA.
                     Analise TODOS os documentos fornecidos (Edital e Anexos) com extremo rigor.
@@ -798,12 +812,10 @@ elif menu == "📅 Calendário":
             date_iso = extract_date_for_calendar(full_title)
             
             if date_iso:
-                # 1. Extrai Órgão do Conteúdo (Localmente para exibição)
                 orgao_cal = "Órgão"
                 match_org = re.search(r"(?:1\.|órgão).*?[:\-\?]\s*(.*?)(?:\n|2\.|Qual|$)", item['content'], re.IGNORECASE)
                 if match_org: orgao_cal = match_org.group(1).replace("*", "").strip()[:30]
 
-                # 2. Extrai Palavra-Chave do Objeto (3 primeiras palavras)
                 obj_cal = "Geral"
                 match_obj = re.search(r"(?:2\.|objeto).*?[:\-\?]\s*(.*?)(?:\n|3\.|Qual|$)", item['content'], re.IGNORECASE | re.DOTALL)
                 if match_obj:
@@ -811,7 +823,6 @@ elif menu == "📅 Calendário":
                     raw_o = re.sub(r'[^\w\s]', '', raw_o)
                     obj_cal = " ".join(raw_o.split()[:3])
                 
-                # Título Formatado para o Evento
                 title_for_event = f"{orgao_cal} - {obj_cal}"
 
                 events.append({
@@ -844,7 +855,6 @@ elif menu == "📅 Calendário":
     if cal_state.get("eventClick"):
         clicked_event = cal_state["eventClick"]["event"]
         
-        # Recupera dados
         title_clk = clicked_event.get("title", "Sem título")
         props = clicked_event.get("extendedProps", {})
         content_view = props.get("content", "")
@@ -852,7 +862,6 @@ elif menu == "📅 Calendário":
         st.divider()
         st.subheader(f"📌 {title_clk}")
         
-        # LINK PARA ANÁLISE COMPLETA (EXPANDER)
         with st.expander("📄 Ver Análise Completa (Clique para expandir)"):
             st.markdown(content_view)
             st.divider()
