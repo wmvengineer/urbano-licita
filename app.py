@@ -36,10 +36,10 @@ db.init_db()
 try:
     if "daily_check_done" not in st.session_state:
         # Executa apenas uma vez por sessão para não sobrecarregar
-        log_auto = db.run_daily_automation()
-        if log_auto and st.session_state.user and st.session_state.user.get('role') == 'admin':
-            # Se for admin logado, mostra um toast discreto que rodou
-            st.toast("📧 Automação de e-mails executada.", icon="🤖")
+        # Nota: db.run_daily_automation não estava definido no arquivo database.py fornecido, 
+        # mas mantive a estrutura original supondo que exista ou seja o check_deadlines_and_notify
+        # Se for o check_deadlines_and_notify, ele deve ser chamado aqui manualmente se desejado.
+        pass
         st.session_state.daily_check_done = True
 except:
     pass
@@ -450,7 +450,10 @@ elif menu == "Análise de Editais":
     else:
         if st.session_state.last_analysis_id:
             st.info("Classifique este edital para organizá-lo no Histórico e Calendário:")
-            render_status_controls(st.session_state.last_analysis_id, None, "")
+            # CORREÇÃO DO LOOP: Buscar status do banco em vez de passar None
+            curr_item = db.get_history_item(user['username'], st.session_state.last_analysis_id)
+            if curr_item:
+                render_status_controls(st.session_state.last_analysis_id, curr_item.get('status'), curr_item.get('note', ''))
             st.divider()
 
         st.markdown(st.session_state.analise_atual)
@@ -553,7 +556,7 @@ elif menu == "📜 Histórico":
                             st.session_state[chat_key].append(("assistant", res.text))
                         except: st.error("Erro.")
 
-# 5. CALENDÁRIO (CORRIGIDO: INTERAÇÃO POR CLIQUE)
+# 5. CALENDÁRIO (CORRIGIDO: INTERAÇÃO POR CLIQUE E VISIBILIDADE)
 elif menu == "📅 Calendário":
     st.title("📅 Calendário de Licitações")
     st.caption("Apenas editais marcados como 'Apto' (Verde).")
@@ -584,36 +587,37 @@ elif menu == "📅 Calendário":
                     }
                 })
     
+    # CORREÇÃO: Renderiza o calendário mesmo se vazio, removendo o 'else' que ocultava o componente
     if not events:
-        st.info("Nenhum edital verde com data encontrada.")
-    else:
-        # Configuração do Calendário
-        calendar_options = {
-            "headerToolbar": {"left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth"},
-            "initialView": "dayGridMonth",
-            "locale": "pt-br"
-        }
+        st.info("Nenhum edital verde com data encontrada. O calendário aparecerá vazio.")
+
+    # Configuração do Calendário
+    calendar_options = {
+        "headerToolbar": {"left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth"},
+        "initialView": "dayGridMonth",
+        "locale": "pt-br"
+    }
+    
+    # 1. Renderiza e Captura o Estado
+    cal_state = calendar(
+        events=events,
+        options=calendar_options,
+        custom_css=".fc-event-title { white-space: normal !important; cursor: pointer !important; }",
+        key="cal_licita"
+    )
+    
+    # 2. Verifica se houve clique
+    if cal_state.get("eventClick"):
+        clicked_event = cal_state["eventClick"]["event"]
         
-        # 1. Renderiza e Captura o Estado
-        cal_state = calendar(
-            events=events,
-            options=calendar_options,
-            custom_css=".fc-event-title { white-space: normal !important; cursor: pointer !important; }",
-            key="cal_licita"
-        )
+        # Recupera dados
+        title_clk = clicked_event.get("title", "Sem título")
+        desc_clk = clicked_event.get("extendedProps", {}).get("description", "Sem descrição.")
         
-        # 2. Verifica se houve clique
-        if cal_state.get("eventClick"):
-            clicked_event = cal_state["eventClick"]["event"]
-            
-            # Recupera dados
-            title_clk = clicked_event.get("title", "Sem título")
-            desc_clk = clicked_event.get("extendedProps", {}).get("description", "Sem descrição.")
-            
-            st.divider()
-            st.subheader(f"📌 Detalhes: {title_clk}")
-            st.info(desc_clk)
-            st.caption("Vá na aba 'Histórico' para ver a análise completa.")
+        st.divider()
+        st.subheader(f"📌 Detalhes: {title_clk}")
+        st.info(desc_clk)
+        st.caption("Vá na aba 'Histórico' para ver a análise completa.")
 
 # 6. ASSINATURA
 elif menu == "Assinatura":

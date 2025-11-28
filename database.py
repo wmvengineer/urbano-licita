@@ -207,6 +207,15 @@ def get_user_history_list(username):
         return [{'id': d.id, **d.to_dict()} for d in docs]
     except: return []
 
+def get_history_item(username, doc_id):
+    """Busca um item específico do histórico pelo ID (Correção do Loop)."""
+    try:
+        doc = db.collection('users').document(username).collection('history').document(doc_id).get()
+        if doc.exists:
+            return doc.to_dict()
+        return None
+    except: return None
+
 def delete_history_item(username, doc_id):
     try:
         db.collection('users').document(username).collection('history').document(doc_id).delete()
