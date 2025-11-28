@@ -444,17 +444,24 @@ elif menu == "Análise de Editais":
                 color: rgba(49, 51, 63, 0.6);
                 font-size: 14px;
             }
+            
             /* Tradução do Botão "Browse files" */
             [data-testid='stFileUploader'] button {
-                color: transparent !important;
+                color: transparent !important; /* Oculta texto original */
+                position: relative; /* Cria referência para o texto novo */
             }
             [data-testid='stFileUploader'] button::after {
                 content: "Procurar arquivos";
-                color: rgb(49, 51, 63);
+                color: rgb(49, 51, 63); /* Cor original do texto */
                 position: absolute;
-                top: 50%;
-                left: 50%;
-                transform: translate(-50%, -50%);
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+                display: flex;
+                align_items: center;
+                justify_content: center;
+                pointer-events: none; /* Garante que o clique passe para o botão */
             }
             </style>
         """, unsafe_allow_html=True)
