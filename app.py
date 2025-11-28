@@ -16,8 +16,9 @@ from xhtml2pdf import pisa
 import markdown
 from streamlit_calendar import calendar
 
-# --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Urbano", layout="wide", page_icon="🏢")
+# --- CONFIGURAÇÃO (ATUALIZADA) ---
+icon_file = "LOGO URBANO OFICIAL.png" if os.path.exists("LOGO URBANO OFICIAL.png") else "🏢"
+st.set_page_config(page_title="Urbano", layout="wide", page_icon=icon_file)
 
 # API KEY
 try:
@@ -178,15 +179,15 @@ def logout():
     time.sleep(1)
     st.rerun()
 
-# --- TELA DE LOGIN (Redesign V3) ---
+# --- TELA DE LOGIN (Redesign Azul Marinho + Recuperar) ---
 if not st.session_state.user:
-    # Injeção de CSS para replicar o estilo Login V3
+    # Injeção de CSS para replicar o estilo e colocar Abas DENTRO do cartão
     st.markdown("""
         <style>
         /* Importando Fonte Poppins */
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&display=swap');
 
-        /* Fundo da Página (Imagem de Fundo) */
+        /* Fundo da Página */
         .stApp {
             background-image: url('https://colorlib.com/etc/lf/Login_v3/images/bg-01.jpg');
             background-size: cover;
@@ -195,26 +196,36 @@ if not st.session_state.user:
             font-family: 'Poppins', sans-serif;
         }
 
-        /* Ocultar elementos padrão do Streamlit para limpar a tela */
+        /* Ocultar elementos padrão */
         header {visibility: hidden;}
         footer {visibility: hidden;}
         .block-container {
-            padding-top: 5rem;
-            padding-bottom: 5rem;
+            padding-top: 3rem;
+            padding-bottom: 3rem;
         }
 
-        /* Container Principal do Formulário (Mimica .wrap-login100) */
-        div[data-testid="stForm"] {
+        /* 
+           TRUQUE PARA O CARTÃO ENGLOBAR ABAS E FORMULÁRIO:
+           Estilizamos o bloco vertical interno da coluna central.
+           O seletor abaixo busca o 2º elemento filho na estrutura de colunas do Streamlit (coluna do meio)
+           e aplica o fundo azul marinho nele.
+        */
+        div[data-testid="column"]:nth-of-type(2) > div[data-testid="stVerticalBlock"] > div.stVerticalBlock {
+            background: #003366; /* Azul Marinho Sólido */
+            background: -webkit-linear-gradient(top, #003366, #001a33); /* Gradiente */
+            background: linear-gradient(to bottom, #003366, #001933);
+            
             border-radius: 10px;
-            padding: 55px 55px 37px 55px;
-            overflow: hidden;
-            background: #9152f8;
-            background: -webkit-linear-gradient(top, #7579ff, #b224ef);
-            background: -o-linear-gradient(top, #7579ff, #b224ef);
-            background: -moz-linear-gradient(top, #7579ff, #b224ef);
-            background: linear-gradient(top, #7579ff, #b224ef);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            padding: 40px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        }
+
+        /* Removemos o estilo do form individual, pois o container pai já é o cartão */
+        div[data-testid="stForm"] {
+            background: transparent;
             border: none;
+            padding: 0;
+            box-shadow: none;
         }
 
         /* Estilização dos Inputs (Linha inferior, texto branco) */
@@ -239,11 +250,11 @@ if not st.session_state.user:
             box-shadow: none !important;
         }
 
-        /* Estilização do Botão (Arredondado, branco/hover escuro) */
+        /* Estilização do Botão (Branco) */
         div.stButton > button {
             font-family: 'Poppins', sans-serif;
             font-size: 16px;
-            color: #555555 !important;
+            color: #333 !important;
             line-height: 1.2;
             display: flex;
             justify-content: center;
@@ -260,17 +271,12 @@ if not st.session_state.user:
             transition: all 0.4s;
         }
         div.stButton > button:hover {
-            background-color: #333 !important;
-            color: #fff !important;
-        }
-        div.stButton > button:active {
-            background-color: #333 !important;
-            color: #fff !important;
+            background-color: #ddd !important;
         }
 
-        /* Abas (Login/Cadastro) customizadas para o fundo roxo */
+        /* Abas (Login/Cadastro/Recuperar) */
         .stTabs [data-baseweb="tab-list"] {
-            gap: 20px;
+            gap: 10px;
             justify-content: center;
             margin-bottom: 20px;
             border-bottom: 1px solid rgba(255,255,255,0.2);
@@ -278,7 +284,7 @@ if not st.session_state.user:
         .stTabs [data-baseweb="tab"] {
             color: rgba(255,255,255,0.6);
             font-family: 'Poppins', sans-serif;
-            font-size: 16px;
+            font-size: 14px;
             border: none;
             background-color: transparent;
         }
@@ -291,47 +297,28 @@ if not st.session_state.user:
             background-color: #fff;
         }
 
-        /* Alerts */
-        div[data-baseweb="notification"] {
-            background-color: rgba(255, 255, 255, 0.9);
-            border-radius: 10px;
-        }
-        
-        /* Centralizar colunas */
+        /* Ajuste de Espaçamento */
         [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
             align-items: center;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    # Centralização do Card de Login usando colunas
+    # Centralização
     col_spacer_l, col_login, col_spacer_r = st.columns([1, 1.5, 1])
     
     with col_login:
-        # Cabeçalho Visual (Logo e Título)
-        st.markdown("""
-            <div style="text-align: center; margin-bottom: 30px;">
-                <div style="
-                    font-size: 50px;
-                    color: #333;
-                    display: flex;
-                    justify-content: center;
-                    align-items: center;
-                    width: 100px;
-                    height: 100px;
-                    border-radius: 50%;
-                    background-color: #fff;
-                    margin: 0 auto;
-                ">
-                    🏢
-                </div>
-                <h1 style="color: white; font-family: 'Poppins'; text-transform: uppercase; margin-top: 20px; font-size: 28px; font-weight: 500;">
-                    Urbano
-                </h1>
-            </div>
-        """, unsafe_allow_html=True)
+        # Logo Oficial Centralizado
+        if os.path.exists("LOGO URBANO OFICIAL.png"):
+            c_img1, c_img2, c_img3 = st.columns([1, 2, 1])
+            with c_img2:
+                st.image("LOGO URBANO OFICIAL.png", use_container_width=True)
+        else:
+            # Fallback se não tiver imagem
+            st.markdown("<h1 style='text-align:center; color:white;'>URBANO</h1>", unsafe_allow_html=True)
 
-        t1, t2 = st.tabs(["ENTRAR", "CRIAR CONTA"])
+        # Abas DENTRO do contexto da coluna (que está estilizada como cartão via CSS)
+        t1, t2, t3 = st.tabs(["ENTRAR", "CRIAR CONTA", "RECUPERAR"])
         
         # --- ABA LOGIN ---
         with t1:
@@ -343,12 +330,10 @@ if not st.session_state.user:
                 if 'log_n1' not in st.session_state: st.session_state.log_n1 = random.randint(1, 9)
                 if 'log_n2' not in st.session_state: st.session_state.log_n2 = random.randint(1, 9)
                 
-                # Layout compacto para o Captcha
                 st.markdown(f"<p style='color: white; font-size: 12px; margin-bottom: 0px; margin-top: 15px;'>Segurança: Quanto é {st.session_state.log_n1} + {st.session_state.log_n2}?</p>", unsafe_allow_html=True)
                 captcha_ans = st.number_input("Resultado Captcha", step=1, label_visibility="collapsed", key="in_cap_log")
 
                 if st.form_submit_button("LOGIN"):
-                    # Validação Captcha
                     real_ans = st.session_state.log_n1 + st.session_state.log_n2
                     if captcha_ans != real_ans:
                         st.error("eCaptcha incorreto.")
@@ -384,7 +369,6 @@ if not st.session_state.user:
                 cad_captcha_ans = st.number_input("Resultado Captcha Cad", step=1, label_visibility="collapsed", key="in_cap_cad")
 
                 if st.form_submit_button("CADASTRAR"):
-                    # Validação Captcha
                     real_cad_ans = st.session_state.cad_n1 + st.session_state.cad_n2
                     if cad_captcha_ans != real_cad_ans:
                         st.error("eCaptcha incorreto.")
@@ -396,6 +380,21 @@ if not st.session_state.user:
                         ok, m = db.register_user(nu, nn, ne, np)
                         if ok: st.success("Criado! Faça login."); time.sleep(1)
                         else: st.error(m)
+        
+        # --- ABA RECUPERAR SENHA ---
+        with t3:
+            st.markdown("<p style='color:white; font-size:13px;'>Informe seu e-mail cadastrado. Enviaremos uma senha temporária.</p>", unsafe_allow_html=True)
+            with st.form("f_rec"):
+                rec_email = st.text_input("E-mail Cadastrado", placeholder="exemplo@email.com")
+                if st.form_submit_button("RECUPERAR SENHA"):
+                    if rec_email:
+                        with st.spinner("Verificando..."):
+                            ok_rec, msg_rec = db.recover_user_password(rec_email)
+                            if ok_rec: st.success(msg_rec)
+                            else: st.error(msg_rec)
+                    else:
+                        st.warning("Preencha o e-mail.")
+
     st.stop()
 
 # --- ÁREA LOGADA ---
