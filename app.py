@@ -209,11 +209,11 @@ if not st.session_state.user:
             border-radius: 10px;
             padding: 55px 55px 37px 55px;
             overflow: hidden;
-            background: #525af8;
-            background: -webkit-linear-gradient(top, #474cfc, #0b00e3);
-            background: -o-linear-gradient(top, #474cfc, #0b00e3);
-            background: -moz-linear-gradient(top, #474cfc, #0b00e3);
-            background: linear-gradient(top, #474cfc, #0b00e3);
+            background: #20404F;
+            background: -webkit-linear-gradient(top, #394E53, #173a50);
+            background: -o-linear-gradient(top, #394E53, #173a50);
+            background: -moz-linear-gradient(top, #394E53, #173a50);
+            background: linear-gradient(top, #394E53, #173a50);
             box-shadow: 0 5px 15px rgba(0,0,0,0.3);
             border: none;
         }
