@@ -420,7 +420,9 @@ def check_deadlines_and_notify():
             ok, msg = send_email(email, subject, email_body)
             
             status_icon = "✅" if ok else "❌"
-            logs.append(f"{status_icon} {username}: {len(pending_bids)} editais listados.")
-
-    if not logs: return None
-    return "\n".join(logs)
+            # AQUI ESTÁ A MUDANÇA: Adicionamos 'msg' ao log se der erro
+            log_message = f"{status_icon} {username}: {len(pending_bids)} editais."
+            if not ok:
+                log_message += f" ERRO: {msg}"
+            
+            logs.append(log_message)

@@ -17,7 +17,7 @@ jobs:
       - name: Configurar Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.11'
 
       - name: INSTALAÇÃO LEVE (SEM PDF) - VERSÃO FINAL
         # Mudei o nome acima para você conferir no log se atualizou
