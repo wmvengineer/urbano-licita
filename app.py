@@ -32,10 +32,8 @@ except:
 db.init_db()
 
 # --- AUTOMAÇÃO DE E-MAILS (Disparo Diário) ---
-# Tenta rodar a verificação diária sem travar a interface do usuário atual
 try:
     if "daily_check_done" not in st.session_state:
-        # Executa apenas uma vez por sessão para não sobrecarregar
         pass
         st.session_state.daily_check_done = True
 except:
@@ -76,52 +74,33 @@ def convert_to_pdf(source_md):
 
 def extract_title(text):
     """
-    Extrai título no padrão estrito:
-    "Edital" + "Órgão" + "Objeto (max 5 palavras)" + "Data da Sessão/Proposta"
+    Extrai título no padrão: "Edital" + "Órgão" + "Data de Abertura/Limite"
+    Usa a tag DATA_CHAVE inserida via Prompt para garantir precisão.
     """
     try:
-        # 1. Extração do Órgão (Baseado na Pergunta 1)
+        # 1. Extração do Órgão
         orgao = "Órgão Indefinido"
         match_orgao = re.search(r"(?:1\.|órgão).*?[:\-\?]\s*(.*?)(?:\n|2\.|Qual|$)", text, re.IGNORECASE)
         if match_orgao: 
             orgao = match_orgao.group(1).replace("*", "").strip()
 
-        # 2. Extração do Objeto (Baseado na Pergunta 2 - Max 5 Palavras)
-        objeto_resumo = "Objeto Geral"
-        match_objeto = re.search(r"(?:2\.|objeto).*?[:\-\?]\s*(.*?)(?:\n|3\.|Qual|$)", text, re.IGNORECASE | re.DOTALL)
-        if match_objeto:
-            raw_obj = match_objeto.group(1).replace("*", "").strip()
-            # Remove pontuação excessiva
-            raw_obj = re.sub(r'[^\w\s]', '', raw_obj)
-            palavras = raw_obj.split()
-            if len(palavras) > 5:
-                objeto_resumo = " ".join(palavras[:5]) + "..."
-            else:
-                objeto_resumo = " ".join(palavras)
-
-        # 3. Extração da Data (Sessão ou Proposta)
-        data_sessao = "Data a definir"
+        # 2. Extração da Data (Busca pela tag forçada no prompt)
+        data_sessao = "Data Pendente"
+        match_data_tag = re.search(r"DATA_CHAVE:\s*(\d{2}/\d{2}/\d{4})", text)
         
-        # Estratégia: Isolar a resposta da Pergunta 5 (onde pedimos a data)
-        # Busca texto entre "5." e o próximo item "6." ou "CRONOGRAMA"
-        match_q5 = re.search(r"5\.(.*?)(?:6\.|CRONOGRAMA|\n\n|$)", text, re.DOTALL | re.IGNORECASE)
-        
-        if match_q5:
-            # Se achou o bloco da 5, pega a primeira data DD/MM/YYYY que aparecer
-            block_text = match_q5.group(1)
-            match_date = re.search(r"(\d{2}/\d{2}/\d{4})", block_text)
-            if match_date:
-                data_sessao = match_date.group(1)
+        if match_data_tag:
+            data_sessao = match_data_tag.group(1)
         else:
-            # Fallback antigo: Procura 'data' globalmente se a estrutura falhar
-            match_generic = re.search(r"(?:5\.|data).*?(\d{2}/\d{2}/\d{4})", text, re.IGNORECASE)
-            if match_generic:
-                data_sessao = match_generic.group(1)
+            # Fallback: Procura qualquer data na resposta da pergunta 5
+            match_q5 = re.search(r"5\.(.*?)(?:6\.|CRONOGRAMA|\n\n|$)", text, re.DOTALL | re.IGNORECASE)
+            if match_q5:
+                match_generic = re.search(r"(\d{2}/\d{2}/\d{4})", match_q5.group(1))
+                if match_generic: data_sessao = match_generic.group(1)
 
-        # Formatação Final Solicitada
-        return f"Edital {orgao} | {objeto_resumo} | Sessão: {data_sessao}"
+        # Retorna no padrão solicitado
+        return f"Edital {orgao} | {data_sessao}"
     except:
-        return f"Edital {datetime.now().strftime('%d/%m/%Y')} - Processado"
+        return f"Edital Processado em {datetime.now().strftime('%d/%m/%Y')}"
 
 def extract_date_for_calendar(title_str):
     """Extrai YYYY-MM-DD do título para o componente de calendário."""
@@ -167,7 +146,6 @@ def render_status_controls(item_id, current_status, current_note):
         
         new_note = st.text_area("Observações:", value=current_note, placeholder=placeholder_text, key=f"note_{item_id}")
         
-        # Botão para salvar nota (para não salvar a cada digito)
         if st.button("💾 Salvar Observação", key=f"save_{item_id}"):
             db.update_analysis_status(st.session_state.user['username'], item_id, new_status, new_note)
             st.toast("Observação salva com sucesso!")
@@ -254,7 +232,6 @@ with st.sidebar:
     if user['credits'] >= limit and limit < 9999: st.error("Limite atingido!")
 
     st.divider()
-    # MENUS ATUALIZADOS COM CALENDÁRIO
     menu = st.radio("Menu", ["Análise de Editais", "📅 Calendário", "📂 Documentos da Empresa", "📜 Histórico", "Assinatura"])
     if user.get('role') == 'admin':
         st.divider()
@@ -348,7 +325,6 @@ if menu == "Admin":
 
         with col_run:
             st.markdown("#### Disparo Manual de Avisos")
-            st.caption("Verifica todos os editais 'Verdes' de todos os clientes. Se a data for daqui a 2 dias úteis, envia o e-mail.")
             if st.button("🚀 Rodar Verificação de Prazos"):
                 with st.spinner("Verificando datas e enviando e-mails..."):
                     log = db.check_deadlines_and_notify()
@@ -418,19 +394,18 @@ elif menu == "Análise de Editais":
                     
                     status.write("Gerando Relatório Detalhado (14 Pontos)...")
                     model = genai.GenerativeModel('gemini-pro-latest')
+                    
+                    # PROMPT ATUALIZADO COM INSTRUÇÃO EXPLÍCITA DA DATA
                     prompt = """
                     ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA.
                     Analise TODOS os documentos fornecidos (Edital e Anexos) com extremo rigor.
                     Responda pontualmente às 16 questões abaixo. Use Markdown para formatar.
 
-                    Ao responder as questões dos 16 pontos do prompt inicial, não há necessidade de apresentar o texto das perguntas de forma literal como estão escritas. A IA pode proceder de maneira mais didática nas perguntas, mas precisa manter as respostas à tais questões.
-
-
                     1. Qual o nome do órgão contratante?
                     2. Qual o objeto do edital? (Resumo completo)
                     3. Qual o valor estimado para a realização dos serviços?
                     4. Qual a plataforma onde será realizado o certame?
-                    5. Qual a data de realização do certame? (Caso não haja sessão definida, INFORME A DATA LIMITE PARA ENVIO DE PROPOSTAS). Formato: DD/MM/YYYY.
+                    5. DATA_CHAVE: [DD/MM/YYYY] - Qual a data de realização do certame? (Inicie sua resposta EXATAMENTE com "DATA_CHAVE: DD/MM/YYYY". Se não houver sessão física, coloque a data limite de propostas neste formato).
                     6. **CRONOGRAMA**: Datas e Prazos.
                     7. **HABILITAÇÃO JURÍDICA/FISCAL**: Exigências.
                     8. **FINANCEIRO**: Índices (LG, SG, LC) e valores.
@@ -564,7 +539,7 @@ elif menu == "📜 Histórico":
                             st.session_state[chat_key].append(("assistant", res.text))
                         except: st.error("Erro.")
 
-# 5. CALENDÁRIO (CORRIGIDO: INTERAÇÃO POR CLIQUE E VISIBILIDADE)
+# 5. CALENDÁRIO
 elif menu == "📅 Calendário":
     st.title("📅 Calendário de Licitações")
     st.caption("Apenas editais marcados como 'Apto' (Verde).")
@@ -589,7 +564,6 @@ elif menu == "📅 Calendário":
                     "start": date_iso,
                     "backgroundColor": "#28a745",
                     "borderColor": "#28a745",
-                    # Guardamos o título completo para exibir no clique
                     "extendedProps": {
                         "description": full_title
                     }
@@ -598,14 +572,12 @@ elif menu == "📅 Calendário":
     if not events:
         st.info("Nenhum edital verde com data encontrada. O calendário aparecerá vazio.")
 
-    # Configuração do Calendário
     calendar_options = {
         "headerToolbar": {"left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth"},
         "initialView": "dayGridMonth",
         "locale": "pt-br"
     }
     
-    # 1. Renderiza e Captura o Estado
     cal_state = calendar(
         events=events,
         options=calendar_options,
@@ -613,11 +585,8 @@ elif menu == "📅 Calendário":
         key="cal_licita"
     )
     
-    # 2. Verifica se houve clique
     if cal_state.get("eventClick"):
         clicked_event = cal_state["eventClick"]["event"]
-        
-        # Recupera dados
         title_clk = clicked_event.get("title", "Sem título")
         desc_clk = clicked_event.get("extendedProps", {}).get("description", "Sem descrição.")
         
