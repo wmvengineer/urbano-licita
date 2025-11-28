@@ -425,7 +425,39 @@ elif menu == "Análise de Editais":
     if not st.session_state.analise_atual:
         if user['credits'] >= limit: st.warning("Limite atingido."); st.stop()
         
+        # [MODIFICAÇÃO] CSS para traduzir o File Uploader e ajustar visualmente o limite
+        st.markdown("""
+            <style>
+            [data-testid='stFileUploaderDropzoneInstructions'] > div > span {
+                display: none;
+            }
+            [data-testid='stFileUploaderDropzoneInstructions'] > div > small {
+                display: none;
+            }
+            [data-testid='stFileUploaderDropzoneInstructions'] > div::after {
+                content: "Arraste e solte arquivos aqui \\A Limite 25MB por arquivo • PDF";
+                white-space: pre-wrap;
+                text-align: center;
+                display: block;
+                color: rgba(49, 51, 63, 0.6);
+                font-size: 14px;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+
         ups = st.file_uploader("Upload Edital + Anexos", type=["pdf"], accept_multiple_files=True)
+        
+        # [MODIFICAÇÃO] Validação de Tamanho (25MB = ~26.214.400 bytes)
+        valid_files = []
+        if ups:
+            for up in ups:
+                if up.size > 25 * 1024 * 1024:
+                    st.error(f"⚠️ O arquivo '{up.name}' excede o limite de 25MB e foi ignorado.")
+                else:
+                    valid_files.append(up)
+            # Atualiza a lista apenas com os válidos
+            ups = valid_files
+
         if ups and st.button("🚀 Iniciar Auditoria IA"):
             with st.status("Processando...", expanded=True) as status:
                 try:
