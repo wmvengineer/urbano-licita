@@ -7,7 +7,7 @@ import streamlit as st
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.utils import formataddr  # Importação necessária para o nome do remetente
+from email.utils import formataddr # Importação necessária para formatar Nome <email> corretamente
 import re
 import pandas as pd
 
@@ -276,8 +276,9 @@ def send_email(to_email, subject, body_html):
 
         msg = MIMEMultipart()
         
-        # ATUALIZAÇÃO: Uso de formataddr para nome personalizado sem erro 553
-        # O sender_email deve ser EXATAMENTE o que está autenticado na Zoho
+        # ATUALIZAÇÃO: Uso de formataddr para "Nome <email>" sem erro 553
+        # Isso garante que caracteres especiais (ç, ã) sejam codificados corretamente
+        # e o servidor aceite o remetente.
         msg['From'] = formataddr(("Urbano Soluções Integradas", sender_email))
         
         msg['To'] = to_email
@@ -287,7 +288,8 @@ def send_email(to_email, subject, body_html):
 
         with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
             server.login(sender_email, sender_password)
-            # sendmail usa o e-mail puro (envelope) para autenticação, evitando o erro de relay
+            # Envio direto (envelope) para evitar bloqueio de relay, 
+            # mas mantendo o cabeçalho personalizado acima para o cliente ver o nome.
             server.sendmail(sender_email, to_email, msg.as_string())
         
         return True, "Enviado"
