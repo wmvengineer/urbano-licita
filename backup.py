@@ -10,9 +10,10 @@ import database as db
 import extra_streamlit_components as stx
 from io import BytesIO
 
-# --- IMPORTAÇÕES PARA O PDF ---
+# --- LIBS PARA PDF E CALENDÁRIO ---
 from xhtml2pdf import pisa
 import markdown
+from streamlit_calendar import calendar
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Urbano", layout="wide", page_icon="🏢")
@@ -22,12 +23,21 @@ try:
     if "GOOGLE_API_KEY" in st.secrets:
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     else:
+        # Fallback local se necessário
         pass
 except:
     st.error("Configure a API Key.")
     st.stop()
 
 db.init_db()
+
+# --- AUTOMAÇÃO DE E-MAILS (Disparo Diário) ---
+try:
+    if "daily_check_done" not in st.session_state:
+        pass
+        st.session_state.daily_check_done = True
+except:
+    pass
 
 # --- ESTRUTURA DE DOCUMENTOS ---
 DOC_STRUCTURE = {
@@ -37,7 +47,8 @@ DOC_STRUCTURE = {
     "4. Habilitacao Financeira": ["Balanco Patrimonial", "Indices Financeiros", "Certidao Falencia"]
 }
 
-# --- FUNÇÃO GERADORA DE PDF ---
+# --- FUNÇÕES AUXILIARES ---
+
 def convert_to_pdf(source_md):
     """Converte Markdown para PDF com estilo profissional."""
     html_text = markdown.markdown(source_md)
@@ -61,43 +72,83 @@ def convert_to_pdf(source_md):
     if pisa_status.err: return None
     return result_file.getvalue()
 
-# --- HELPER: EXTRAIR TÍTULO (PADRÃO 5 PALAVRAS) ---
 def extract_title(text):
     """
-    Extrai título no padrão estrito:
-    "Edital" + "Órgão" + "Objeto (max 5 palavras)" + "Data da Sessão"
+    Extrai título no padrão: "Edital" + "Órgão" + "Data de Abertura/Limite"
+    Usa a tag DATA_CHAVE inserida via Prompt para garantir precisão.
     """
     try:
-        # 1. Extração do Órgão (Baseado na Pergunta 1)
+        # 1. Extração do Órgão
         orgao = "Órgão Indefinido"
-        # Tenta pegar a resposta da pergunta 1
         match_orgao = re.search(r"(?:1\.|órgão).*?[:\-\?]\s*(.*?)(?:\n|2\.|Qual|$)", text, re.IGNORECASE)
         if match_orgao: 
             orgao = match_orgao.group(1).replace("*", "").strip()
 
-        # 2. Extração do Objeto (Baseado na Pergunta 2 - Max 5 Palavras)
-        objeto_resumo = "Objeto Geral"
-        match_objeto = re.search(r"(?:2\.|objeto).*?[:\-\?]\s*(.*?)(?:\n|3\.|Qual|$)", text, re.IGNORECASE | re.DOTALL)
+        # 2. Extração da Data (Busca pela tag forçada no prompt)
+        data_sessao = "Data Pendente"
+        match_data_tag = re.search(r"DATA_CHAVE:\s*(\d{2}/\d{2}/\d{4})", text)
         
-        if match_objeto:
-            raw_obj = match_objeto.group(1).replace("*", "").strip()
-            # Lógica das 5 palavras
-            palavras = raw_obj.split()
-            if len(palavras) > 5:
-                objeto_resumo = " ".join(palavras[:5]) + "..."
-            else:
-                objeto_resumo = " ".join(palavras)
+        if match_data_tag:
+            data_sessao = match_data_tag.group(1)
+        else:
+            # Fallback: Procura qualquer data na resposta da pergunta 5
+            match_q5 = re.search(r"5\.(.*?)(?:6\.|CRONOGRAMA|\n\n|$)", text, re.DOTALL | re.IGNORECASE)
+            if match_q5:
+                match_generic = re.search(r"(\d{2}/\d{2}/\d{4})", match_q5.group(1))
+                if match_generic: data_sessao = match_generic.group(1)
 
-        # 3. Extração da Data da Sessão (Baseado na Pergunta 5)
-        data_sessao = "Data a definir"
-        match_data = re.search(r"(?:5\.|data).*?(\d{2}/\d{2}/\d{4})", text, re.IGNORECASE)
-        if match_data:
-            data_sessao = match_data.group(1)
-
-        # Formatação Final Solicitada
-        return f"Edital {orgao} | {objeto_resumo} | Sessão: {data_sessao}"
+        # Retorna no padrão solicitado
+        return f"Edital {orgao} | {data_sessao}"
     except:
-        return f"Edital {datetime.now().strftime('%d/%m/%Y')} - Processado"
+        return f"Edital Processado em {datetime.now().strftime('%d/%m/%Y')}"
+
+def extract_date_for_calendar(title_str):
+    """Extrai YYYY-MM-DD do título para o componente de calendário."""
+    try:
+        match = re.search(r"(\d{2})/(\d{2})/(\d{4})", title_str)
+        if match:
+            # Retorna YYYY-MM-DD
+            return f"{match.group(3)}-{match.group(2)}-{match.group(1)}"
+    except: pass
+    return None
+
+def render_status_controls(item_id, current_status, current_note):
+    """Renderiza os controles de status (Checks Coloridos) e salva no banco."""
+    st.caption("Classificação do Edital (Marque uma opção):")
+    c1, c2, c3 = st.columns([0.15, 0.15, 0.7])
+    
+    # Checkboxes agindo como Radio Buttons manuais
+    is_red = c1.checkbox("🟥 Inviável", value=(current_status=='red'), key=f"r_{item_id}")
+    is_yellow = c2.checkbox("🟨 Ajustes", value=(current_status=='yellow'), key=f"y_{item_id}")
+    is_green = c3.checkbox("🟩 Apto", value=(current_status=='green'), key=f"g_{item_id}")
+
+    new_status = current_status
+    
+    # Lógica de seleção única
+    if is_red and current_status != 'red': new_status = 'red'
+    elif is_yellow and current_status != 'yellow': new_status = 'yellow'
+    elif is_green and current_status != 'green': new_status = 'green'
+    
+    # Se desmarcar o atual, volta para None
+    if not is_red and not is_yellow and not is_green: new_status = None
+
+    # Lógica de atualização (se mudou, salva e recarrega para atualizar checks)
+    if new_status != current_status:
+        db.update_analysis_status(st.session_state.user['username'], item_id, new_status, current_note)
+        st.rerun()
+
+    # Caixa de Texto Condicional para Observação
+    if new_status:
+        placeholder_text = ""
+        if new_status == 'red': placeholder_text = "Descreva os motivos da inviabilidade..."
+        elif new_status == 'yellow': placeholder_text = "Quais ajustes são necessários na documentação?"
+        elif new_status == 'green': placeholder_text = "Observações para a participação..."
+        
+        new_note = st.text_area("Observações:", value=current_note, placeholder=placeholder_text, key=f"note_{item_id}")
+        
+        if st.button("💾 Salvar Observação", key=f"save_{item_id}"):
+            db.update_analysis_status(st.session_state.user['username'], item_id, new_status, new_note)
+            st.toast("Observação salva com sucesso!")
 
 # --- SESSÃO & COOKIES ---
 cookie_manager = stx.CookieManager(key="urbano_cookies")
@@ -163,6 +214,7 @@ user = st.session_state.user
 if 'analise_atual' not in st.session_state: st.session_state.analise_atual = None
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 if 'gemini_files_handles' not in st.session_state: st.session_state.gemini_files_handles = []
+if 'last_analysis_id' not in st.session_state: st.session_state.last_analysis_id = None
 
 fresh = db.get_user_by_username(user['username'])
 if fresh: 
@@ -180,7 +232,7 @@ with st.sidebar:
     if user['credits'] >= limit and limit < 9999: st.error("Limite atingido!")
 
     st.divider()
-    menu = st.radio("Menu", ["Análise de Editais", "📂 Documentos da Empresa", "📜 Histórico", "Assinatura"])
+    menu = st.radio("Menu", ["Análise de Editais", "📅 Calendário", "📂 Documentos da Empresa", "📜 Histórico", "Assinatura"])
     if user.get('role') == 'admin':
         st.divider()
         if st.checkbox("Painel Admin"): menu = "Admin"
@@ -250,6 +302,35 @@ if menu == "Admin":
                 if st.button("🔄 Resetar Créditos (Zero)"):
                     db.admin_set_credits_used(sel_user, 0)
                     st.toast("Resetado!"); time.sleep(1); st.rerun()
+        st.divider()
+        st.subheader("📧 Central de Notificações")
+        
+        col_test, col_run = st.columns(2)
+        
+        with col_test:
+            st.markdown("#### Teste de SMTP")
+            test_email = st.text_input("E-mail para teste", value=st.session_state.user['email'] if st.session_state.user.get('email') else "")
+            if st.button("📨 Enviar E-mail de Teste"):
+                if test_email:
+                    with st.spinner("Conectando ao Zoho..."):
+                        ok, msg = db.send_email(
+                            test_email, 
+                            "Teste de SMTP - Urbano", 
+                            "<h1>Funciona!</h1><p>Seu sistema de e-mail está configurado corretamente.</p>"
+                        )
+                        if ok: st.success(msg)
+                        else: st.error(msg)
+                else:
+                    st.warning("Preencha um e-mail.")
+
+        with col_run:
+            st.markdown("#### Disparo Manual de Avisos")
+            if st.button("🚀 Rodar Verificação de Prazos"):
+                with st.spinner("Verificando datas e enviando e-mails..."):
+                    log = db.check_deadlines_and_notify()
+                    st.text_area("Log de Execução", value=log, height=200)
+
+        st.divider()            
 
 # 2. DOCUMENTOS
 elif menu == "📂 Documentos da Empresa":
@@ -281,63 +362,50 @@ elif menu == "📂 Documentos da Empresa":
                         if c_del.button("🗑️", key=f"d_{file}"):
                             db.delete_file_from_storage(file, user['username'], sec, t); st.rerun()
 
-# 3. ANÁLISE (O CORAÇÃO DO SISTEMA)
+# 3. ANÁLISE
 elif menu == "Análise de Editais":
     st.title("🔍 Analisar Novo Edital")
     
-    if 'gemini_files_handles' not in st.session_state: 
-        st.session_state.gemini_files_handles = []
-
     if st.session_state.analise_atual:
         if st.button("🔄 Nova Análise"):
             st.session_state.analise_atual = None
             st.session_state.gemini_files_handles = []
             st.session_state.chat_history = []
+            st.session_state.last_analysis_id = None
             st.rerun()
     
     if not st.session_state.analise_atual:
-        if user['credits'] >= limit:
-            st.warning("Seu plano atingiu o limite de análises."); st.stop()
-            
-        uploaded_files = st.file_uploader("Upload do Edital e Anexos (PDF)", type=["pdf"], accept_multiple_files=True)
+        if user['credits'] >= limit: st.warning("Limite atingido."); st.stop()
         
-        if uploaded_files and st.button("🚀 Iniciar Auditoria IA"):
-            
-            with st.status("O Urbano está processando os documentos...", expanded=True) as status:
+        ups = st.file_uploader("Upload Edital + Anexos", type=["pdf"], accept_multiple_files=True)
+        if ups and st.button("🚀 Iniciar Auditoria IA"):
+            with st.status("Processando...", expanded=True) as status:
                 try:
                     status.write("Validando plano...")
                     if not db.consume_credit_atomic(user['username']): st.error("Erro crédito"); st.stop()
                     
-                    status.write(f"Lendo {len(uploaded_files)} arquivos...")
-                    files_for_ai = [] 
-                    temp_paths_cleanup = []
-
-                    for upl in uploaded_files:
+                    status.write(f"Lendo {len(ups)} arquivos...")
+                    files_ai = []; temps = []
+                    for up in ups:
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                            tmp.write(upl.getvalue())
-                            tmp_path = tmp.name
-                            temp_paths_cleanup.append(tmp_path)
-                        g_file = genai.upload_file(tmp_path, display_name=upl.name)
-                        files_for_ai.append(g_file)
+                            tmp.write(up.getvalue()); tmp_path = tmp.name; temps.append(tmp_path)
+                        files_ai.append(genai.upload_file(tmp_path, display_name=up.name))
+                    st.session_state.gemini_files_handles = files_ai
                     
-                    st.session_state.gemini_files_handles = files_for_ai
-                    
-                    # --- NOVO PROMPT DE 14 PONTOS ---
-                    status.write("Gerando Relatório Detalhado...")
+                    status.write("Gerando Relatório Detalhado (14 Pontos)...")
                     model = genai.GenerativeModel('gemini-pro-latest')
-                    prompt_inicial = """
+                    
+                    # PROMPT ATUALIZADO COM INSTRUÇÃO EXPLÍCITA DA DATA
+                    prompt = """
                     ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA.
                     Analise TODOS os documentos fornecidos (Edital e Anexos) com extremo rigor.
                     Responda pontualmente às 16 questões abaixo. Use Markdown para formatar.
-
-                    Ao responder as questões dos 16 pontos do prompt inicial, não há necessidade de apresentar o texto das perguntas de forma literal como estão escritas. A IA pode proceder de maneira mais didática nas perguntas, mas precisa manter as respostas à tais questões.
-
 
                     1. Qual o nome do órgão contratante?
                     2. Qual o objeto do edital? (Resumo completo)
                     3. Qual o valor estimado para a realização dos serviços?
                     4. Qual a plataforma onde será realizado o certame?
-                    5. Qual a data de realização do certame e até quando é possível enviar a proposta?
+                    5. Qual a data de realização do certame? (Inicie sua resposta EXATAMENTE com "DD/MM/YYYY". Se não houver sessão física, coloque a data limite de propostas neste formato).
                     6. **CRONOGRAMA**: Datas e Prazos.
                     7. **HABILITAÇÃO JURÍDICA/FISCAL**: Exigências.
                     8. **FINANCEIRO**: Índices (LG, SG, LC) e valores.
@@ -350,67 +418,64 @@ elif menu == "Análise de Editais":
                     15. O que o edital versa sobre identificação da empresa no envio da documentação ou proposta?
                     16. Analise os riscos envolvidos na participação da empresa nesse serviço.
                     """
-                    
-                    resp = model.generate_content(files_for_ai + [prompt_inicial])
-                    
+                    resp = model.generate_content(files_ai + [prompt])
                     st.session_state.analise_atual = resp.text
+                    
                     title = extract_title(resp.text)
-                    db.save_analysis_history(user['username'], title, resp.text)
+                    new_doc_id = db.save_analysis_history(user['username'], title, resp.text)
+                    st.session_state.last_analysis_id = new_doc_id
                     
-                    status.update(label="Concluído!", state="complete", expanded=False)
-                    for p in temp_paths_cleanup: os.remove(p)
+                    status.update(label="Pronto!", state="complete", expanded=False)
+                    for p in temps: os.remove(p)
                     st.rerun()
-                    
                 except Exception as e:
                     db.refund_credit_atomic(user['username'])
-                    st.error(f"Falha: {e}. Crédito estornado.")
-    
+                    st.error(f"Erro: {e}. Crédito devolvido.")
     else:
+        if st.session_state.last_analysis_id:
+            st.info("Classifique este edital para organizá-lo no Histórico e Calendário:")
+            curr_item = db.get_history_item(user['username'], st.session_state.last_analysis_id)
+            if curr_item:
+                render_status_controls(st.session_state.last_analysis_id, curr_item.get('status'), curr_item.get('note', ''))
+            st.divider()
+
         st.markdown(st.session_state.analise_atual)
         st.divider()
         
         st.subheader("🚀 Cruzamento de Dados")
-        if user['plan'] == 'free':
-            st.info("🔒 Upgrade necessário.")
+        if user['plan'] == 'free': st.info("🔒 Upgrade necessário.")
         else:
             if st.button("Verificar Minha Viabilidade"):
                 with st.spinner("Comparando documentos..."):
                     c_files = db.get_all_company_files_as_bytes(user['username'])
-                    if not c_files:
-                        st.warning("Sem documentos da empresa.")
+                    if not c_files: st.warning("Sem docs da empresa.")
                     else:
-                        temp_handles = []
-                        for name, data in c_files:
+                        temps = []
+                        for n, d in c_files:
                             with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as t:
-                                t.write(data); t_path = t.name
-                            temp_handles.append(genai.upload_file(t_path, display_name=name))
-                            os.remove(t_path)
+                                t.write(d); tp = t.name
+                            temps.append(genai.upload_file(tp, display_name=n)); os.remove(tp)
                         
-                        prompt_cross = "Checklist de Viabilidade: Edital vs Empresa. Para cada item: Edital pede X -> Empresa tem Y -> Veredito."
+                        prompt = "Checklist de Viabilidade: Edital vs Empresa. Para cada item: Edital pede X -> Empresa tem Y -> Veredito."
                         model = genai.GenerativeModel('gemini-pro-latest')
-                        inputs = st.session_state.gemini_files_handles + temp_handles + [prompt_cross]
-                        resp_cross = model.generate_content(inputs)
-                        
-                        st.session_state.analise_atual += "\n\n---\n\n# 🛡️ VIABILIDADE\n" + resp_cross.text
-                        db.save_analysis_history(user['username'], "Update Cruzamento", st.session_state.analise_atual)
+                        resp = model.generate_content(st.session_state.gemini_files_handles + temps + [prompt])
+                        st.session_state.analise_atual += "\n\n---\n\n# 🛡️ VIABILIDADE\n" + resp.text
                         st.rerun()
-
+        
         st.divider()
         st.subheader("💬 Chat")
-        for role, txt in st.session_state.chat_history:
-            with st.chat_message(role): st.markdown(txt)
-            
+        for r, t in st.session_state.chat_history:
+            with st.chat_message(r): st.markdown(t)
         if q := st.chat_input("Dúvida?"):
             st.session_state.chat_history.append(("user", q))
             with st.chat_message("user"): st.markdown(q)
             with st.chat_message("assistant"):
                 with st.spinner("..."):
                     try:
-                        model = genai.GenerativeModel('gemini-pro-latest')
-                        inputs = st.session_state.gemini_files_handles + [f"Responda baseado no edital: {q}"]
-                        r = model.generate_content(inputs)
-                        st.markdown(r.text)
-                        st.session_state.chat_history.append(("assistant", r.text))
+                        m = genai.GenerativeModel('gemini-pro-latest')
+                        res = m.generate_content(st.session_state.gemini_files_handles + [f"Responda baseado no edital: {q}"])
+                        st.markdown(res.text)
+                        st.session_state.chat_history.append(("assistant", res.text))
                     except: st.error("Erro IA.")
 
         st.divider()
@@ -419,63 +484,118 @@ elif menu == "Análise de Editais":
                 content = st.session_state.analise_atual
                 if st.session_state.chat_history:
                     content += "\n\n<div class='chat-section'><h1>💬 Histórico de Dúvidas</h1>"
-                    for role, text in st.session_state.chat_history:
-                        content += f"<p class='chat-q'>{role.upper()}: {text}</p>"
+                    for r, t in st.session_state.chat_history:
+                        content += f"<p class='chat-q'>{r.upper()}: {t}</p>"
                     content += "</div>"
-                pdf_bytes = convert_to_pdf(content)
-                if pdf_bytes:
-                    st.download_button("⬇️ Download PDF", data=pdf_bytes, file_name=f"Analise_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
+                pdf = convert_to_pdf(content)
+                if pdf: st.download_button("⬇️ Download PDF", data=pdf, file_name=f"Analise_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
                 else: st.error("Erro PDF.")
 
-# 4. HISTÓRICO (ATUALIZADO PARA EXIBIR TÍTULO PADRONIZADO)
+# 4. HISTÓRICO
 elif menu == "📜 Histórico":
     st.title("Biblioteca de Análises")
-    
     lst = db.get_user_history_list(user['username'])
-    if not lst: st.info("Nenhuma análise salva.")
-    
+    if not lst: st.info("Vazio.")
     for item in lst:
         chat_key = f"hist_chat_{item['id']}"
         if chat_key not in st.session_state: st.session_state[chat_key] = []
-        
         dt = item['created_at'].strftime("%d/%m/%Y")
         
-        # AQUI: Gera o título dinamicamente baseado no conteúdo salvo
-        # Isso garante que análises antigas também sigam o padrão "5 palavras"
-        display_title = extract_title(item['content'])
+        raw_title = extract_title(item['content'])
+        status = item.get('status')
+        
+        display_title = raw_title
+        if status == 'red': display_title = f":red[{raw_title}]"
+        elif status == 'yellow': display_title = f":orange[{raw_title}]"
+        elif status == 'green': display_title = f"**:green[{raw_title}]**"
         
         with st.expander(f"📅 {dt} | {display_title}"):
-            st.markdown(item['content'])
+            render_status_controls(item['id'], status, item.get('note', ''))
             st.divider()
             
-            c_pdf, c_del = st.columns([0.8, 0.2])
-            with c_pdf:
-                pdf_bytes = convert_to_pdf(item['content'])
-                if pdf_bytes:
-                    st.download_button("📄 Baixar PDF", data=pdf_bytes, file_name=f"Relatorio_{item['id'][:6]}.pdf", mime="application/pdf")
-            with c_del:
-                if st.button("🗑️", key=f"del_{item['id']}"):
-                    db.delete_history_item(user['username'], item['id']); st.rerun()
-
-            st.markdown("---")
-            st.subheader("💬 Dúvidas (Modo Histórico)")
-            for role, text in st.session_state[chat_key]:
-                with st.chat_message(role): st.markdown(text)
+            st.markdown(item['content'])
             
-            if q := st.chat_input("Dúvida sobre este relatório?", key=f"in_{item['id']}"):
+            c1, c2 = st.columns([0.8, 0.2])
+            with c1:
+                pdf = convert_to_pdf(item['content'])
+                if pdf: st.download_button("📄 PDF", data=pdf, file_name=f"Relatorio_{item['id'][:6]}.pdf")
+            with c2:
+                if st.button("🗑️", key=f"d_{item['id']}"):
+                    db.delete_history_item(user['username'], item['id']); st.rerun()
+            
+            st.markdown("---")
+            st.subheader("💬 Dúvidas (Histórico)")
+            for r, t in st.session_state[chat_key]:
+                with st.chat_message(r): st.markdown(t)
+            if q := st.chat_input("Pergunta...", key=f"in_{item['id']}"):
                 st.session_state[chat_key].append(("user", q))
                 with st.chat_message("user"): st.markdown(q)
                 with st.chat_message("assistant"):
-                    with st.spinner("Lendo relatório salvo..."):
+                    with st.spinner("..."):
                         try:
-                            model = genai.GenerativeModel('gemini-1.5-flash')
-                            prompt = f"Contexto: {item['content']}\nPergunta: {q}"
-                            res = model.generate_content(prompt)
+                            m = genai.GenerativeModel('gemini-pro-latest')
+                            res = m.generate_content(f"Contexto: {item['content']}\nPergunta: {q}")
                             st.markdown(res.text)
                             st.session_state[chat_key].append(("assistant", res.text))
                         except: st.error("Erro.")
 
-# 5. ASSINATURA
+# 5. CALENDÁRIO
+elif menu == "📅 Calendário":
+    st.title("📅 Calendário de Licitações")
+    st.caption("Apenas editais marcados como 'Apto' (Verde).")
+    st.info("💡 Clique em uma barra verde para ver os detalhes abaixo.")
+    
+    lst = db.get_user_history_list(user['username'])
+    events = []
+    
+    for item in lst:
+        if item.get('status') == 'green':
+            full_title = extract_title(item['content'])
+            date_iso = extract_date_for_calendar(full_title)
+            
+            if date_iso:
+                try:
+                    obj_short = full_title.split('|')[1].strip()
+                except:
+                    obj_short = "Licitação"
+                
+                events.append({
+                    "title": obj_short,
+                    "start": date_iso,
+                    "backgroundColor": "#28a745",
+                    "borderColor": "#28a745",
+                    "extendedProps": {
+                        "description": full_title
+                    }
+                })
+    
+    if not events:
+        st.info("Nenhum edital verde com data encontrada. O calendário aparecerá vazio.")
+
+    calendar_options = {
+        "headerToolbar": {"left": "today prev,next", "center": "title", "right": "dayGridMonth,listMonth"},
+        "initialView": "dayGridMonth",
+        "locale": "pt-br"
+    }
+    
+    cal_state = calendar(
+        events=events,
+        options=calendar_options,
+        custom_css=".fc-event-title { white-space: normal !important; cursor: pointer !important; }",
+        key="cal_licita"
+    )
+    
+    if cal_state.get("eventClick"):
+        clicked_event = cal_state["eventClick"]["event"]
+        title_clk = clicked_event.get("title", "Sem título")
+        desc_clk = clicked_event.get("extendedProps", {}).get("description", "Sem descrição.")
+        
+        st.divider()
+        st.subheader(f"📌 Detalhes: {title_clk}")
+        st.info(desc_clk)
+        st.caption("Vá na aba 'Histórico' para ver a análise completa.")
+
+# 6. ASSINATURA
 elif menu == "Assinatura":
     st.title("💎 Planos")
     st.info(f"Plano Atual: **{user['plan'].upper()}**")

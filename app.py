@@ -97,7 +97,7 @@ def extract_title(text):
                 match_generic = re.search(r"(\d{2}/\d{2}/\d{4})", match_q5.group(1))
                 if match_generic: data_sessao = match_generic.group(1)
 
-        # Retorna no padrão solicitado
+        # Retorna no padrão solicitado para o Histórico
         return f"Edital {orgao} | {data_sessao}"
     except:
         return f"Edital Processado em {datetime.now().strftime('%d/%m/%Y')}"
@@ -405,7 +405,7 @@ elif menu == "Análise de Editais":
                     2. Qual o objeto do edital? (Resumo completo)
                     3. Qual o valor estimado para a realização dos serviços?
                     4. Qual a plataforma onde será realizado o certame?
-                    5. Qual a data de realização do certame? (Inicie sua resposta EXATAMENTE com "DD/MM/YYYY". Se não houver sessão física, coloque a data limite de propostas neste formato).
+                    5. DATA_CHAVE: [DD/MM/YYYY] - Qual a data de realização do certame? (Inicie sua resposta EXATAMENTE com "DATA_CHAVE: DD/MM/YYYY". Se não houver sessão física, coloque a data limite de propostas neste formato).
                     6. **CRONOGRAMA**: Datas e Prazos.
                     7. **HABILITAÇÃO JURÍDICA/FISCAL**: Exigências.
                     8. **FINANCEIRO**: Índices (LG, SG, LC) e valores.
@@ -554,18 +554,30 @@ elif menu == "📅 Calendário":
             date_iso = extract_date_for_calendar(full_title)
             
             if date_iso:
-                try:
-                    obj_short = full_title.split('|')[1].strip()
-                except:
-                    obj_short = "Licitação"
+                # 1. Extrai Órgão do Conteúdo (Localmente para exibição)
+                orgao_cal = "Órgão"
+                match_org = re.search(r"(?:1\.|órgão).*?[:\-\?]\s*(.*?)(?:\n|2\.|Qual|$)", item['content'], re.IGNORECASE)
+                if match_org: orgao_cal = match_org.group(1).replace("*", "").strip()[:30]
+
+                # 2. Extrai Palavra-Chave do Objeto (3 primeiras palavras)
+                obj_cal = "Geral"
+                match_obj = re.search(r"(?:2\.|objeto).*?[:\-\?]\s*(.*?)(?:\n|3\.|Qual|$)", item['content'], re.IGNORECASE | re.DOTALL)
+                if match_obj:
+                    raw_o = match_obj.group(1).replace("*", "").strip()
+                    raw_o = re.sub(r'[^\w\s]', '', raw_o)
+                    obj_cal = " ".join(raw_o.split()[:3])
                 
+                # Título Formatado para o Evento
+                title_for_event = f"{orgao_cal} - {obj_cal}"
+
                 events.append({
-                    "title": obj_short,
+                    "title": title_for_event,
                     "start": date_iso,
                     "backgroundColor": "#28a745",
                     "borderColor": "#28a745",
                     "extendedProps": {
-                        "description": full_title
+                        "content": item['content'],
+                        "original_title": full_title
                     }
                 })
     
@@ -587,13 +599,22 @@ elif menu == "📅 Calendário":
     
     if cal_state.get("eventClick"):
         clicked_event = cal_state["eventClick"]["event"]
+        
+        # Recupera dados
         title_clk = clicked_event.get("title", "Sem título")
-        desc_clk = clicked_event.get("extendedProps", {}).get("description", "Sem descrição.")
+        props = clicked_event.get("extendedProps", {})
+        content_view = props.get("content", "")
         
         st.divider()
-        st.subheader(f"📌 Detalhes: {title_clk}")
-        st.info(desc_clk)
-        st.caption("Vá na aba 'Histórico' para ver a análise completa.")
+        st.subheader(f"📌 {title_clk}")
+        
+        # LINK PARA ANÁLISE COMPLETA (EXPANDER)
+        with st.expander("📄 Ver Análise Completa (Clique para expandir)"):
+            st.markdown(content_view)
+            st.divider()
+            pdf = convert_to_pdf(content_view)
+            if pdf: 
+                st.download_button("⬇️ Baixar PDF da Análise", data=pdf, file_name="analise_completa.pdf")
 
 # 6. ASSINATURA
 elif menu == "Assinatura":

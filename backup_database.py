@@ -4,10 +4,15 @@ import bcrypt
 import secrets
 import datetime
 import streamlit as st
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import re
+import pandas as pd
+
 
 # --- CONFIGURAÇÃO ---
 # ⚠️ SUBSTITUA PELO SEU ID REAL DO FIREBASE STORAGE (sem gs://)
-# Exemplo: BUCKET_NAME = "projeto-urbano-123.appspot.com"
 BUCKET_NAME = "urbano-licita.firebasestorage.app" 
 
 # --- CONEXÃO COM O FIREBASE (SINGLETON) ---
@@ -33,7 +38,7 @@ db = firestore.client()
 try:
     bucket = storage.bucket(name=BUCKET_NAME)
 except Exception as e:
-    st.error(f"Erro ao conectar no Storage: {e}. Verifique o BUCKET_NAME no database.py")
+    st.error(f"Erro ao conectar no Storage: {e}")
 
 # --- AUTENTICAÇÃO E USUÁRIOS ---
 
@@ -170,14 +175,30 @@ def get_all_company_files_as_bytes(username):
         return files_data
     except: return []
 
-# --- HISTÓRICO ---
+# --- HISTÓRICO E STATUS (ATUALIZADO) ---
 
 def save_analysis_history(username, title, full_text):
+    """Salva e retorna o ID do documento criado."""
     try:
-        db.collection('users').document(username).collection('history').add({
-            'title': title, 'content': full_text, 'created_at': datetime.datetime.now()
+        _, doc_ref = db.collection('users').document(username).collection('history').add({
+            'title': title, 
+            'content': full_text, 
+            'created_at': datetime.datetime.now(),
+            'status': None, # red, yellow, green
+            'note': ''      # Observação do cliente
         })
-    except: pass
+        return doc_ref.id
+    except: return None
+
+def update_analysis_status(username, doc_id, status, note):
+    """Atualiza a cor e observação de um edital."""
+    try:
+        db.collection('users').document(username).collection('history').document(doc_id).update({
+            'status': status,
+            'note': note
+        })
+        return True
+    except: return False
 
 def get_user_history_list(username):
     try:
@@ -185,6 +206,15 @@ def get_user_history_list(username):
                  .order_by('created_at', direction=firestore.Query.DESCENDING).stream()
         return [{'id': d.id, **d.to_dict()} for d in docs]
     except: return []
+
+def get_history_item(username, doc_id):
+    """Busca um item específico do histórico pelo ID (Correção do Loop)."""
+    try:
+        doc = db.collection('users').document(username).collection('history').document(doc_id).get()
+        if doc.exists:
+            return doc.to_dict()
+        return None
+    except: return None
 
 def delete_history_item(username, doc_id):
     try:
@@ -224,3 +254,184 @@ def admin_set_credits_used(username, new_amount):
         db.collection('users').document(username).update({'credits_used': val})
         return True
     except: return False
+
+    
+# --- SISTEMA DE NOTIFICAÇÃO E E-MAIL (ATUALIZADO - RESUMO DIÁRIO) ---
+
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+import re
+import pandas as pd
+import datetime
+
+def send_email(to_email, subject, body_html):
+    """Envia um e-mail genérico usando as configurações do secrets."""
+    try:
+        smtp_server = st.secrets["EMAIL"]["SMTP_SERVER"]
+        smtp_port = st.secrets["EMAIL"]["SMTP_PORT"]
+        sender_email = st.secrets["EMAIL"]["EMAIL_ADDRESS"]
+        sender_password = st.secrets["EMAIL"]["EMAIL_PASSWORD"]
+
+        msg = MIMEMultipart()
+        msg['From'] = f"Urbano Licitações <{sender_email}>"
+        msg['To'] = to_email
+        msg['Subject'] = subject
+
+        msg.attach(MIMEText(body_html, 'html'))
+
+        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
+            server.login(sender_email, sender_password)
+            server.send_message(msg)
+        
+        return True, "Enviado"
+    except Exception as e:
+        return False, str(e)
+
+def count_business_days_left(start_date, end_date):
+    if start_date >= end_date: return 0
+    try:
+        # Gera intervalo de dias úteis
+        bdays = pd.bdate_range(start=start_date, end=end_date)
+        return len(bdays) - 1
+    except: return 999
+
+def extract_details_from_text(full_text):
+    """Tenta pescar Plataforma e Horário do texto do edital."""
+    details = {
+        "plataforma": "Verificar no Edital",
+        "hora": "09:00 (Estimar)"
+    }
+    
+    # Tenta achar plataforma
+    match_plat = re.search(r"(?:plataforma|portal|sítio eletrônico|endereço eletrônico).*?[:\-\?]\s*(.*?)(?:\n|\.|,)", full_text, re.IGNORECASE)
+    if match_plat:
+        clean = match_plat.group(1).strip()[:50] # Limita caracteres
+        if len(clean) > 3: details["plataforma"] = clean
+        
+    # Tenta achar horário (padrão HH:MM ou HHhMM)
+    match_hora = re.search(r"(\d{2}[:h]\d{2})", full_text)
+    if match_hora:
+        details["hora"] = match_hora.group(1).replace('h', ':')
+        
+    return details
+
+def check_deadlines_and_notify():
+    """
+    Gera um RESUMO agrupado por usuário com todos os editais próximos.
+    Roda às 08h e 16h (definido no GitHub Actions).
+    """
+    logs = []
+    users_ref = db.collection('users').stream()
+    today = datetime.datetime.now().date()
+    
+    # 1. VARRER USUÁRIOS
+    for u in users_ref:
+        user_data = u.to_dict()
+        email = user_data.get('email')
+        username = user_data.get('username')
+        name = user_data.get('name', 'Licitante')
+        
+        if not email: continue
+        
+        # Lista para armazenar os editais deste usuário
+        pending_bids = []
+        
+        # Busca histórico VERDE (Apto)
+        docs = db.collection('users').document(username).collection('history').where('status', '==', 'green').stream()
+        
+        for doc in docs:
+            data = doc.to_dict()
+            title = data.get('title', 'Sem Título')
+            full_content = data.get('content', '')
+            
+            # Extrai Data
+            match_date = re.search(r"(\d{2})/(\d{2})/(\d{4})", title)
+            if match_date:
+                event_date_str = f"{match_date.group(3)}-{match_date.group(2)}-{match_date.group(1)}"
+                event_date = pd.to_datetime(event_date_str).date()
+                
+                bdays_left = count_business_days_left(today, event_date)
+                
+                # CRITÉRIO: Entre 0 e 2 dias úteis restantes
+                if 0 <= bdays_left <= 2:
+                    
+                    # Extrai dados refinados para a tabela
+                    parts = title.split('|')
+                    orgao = parts[0].replace("Edital", "").strip() if len(parts) > 0 else "Indefinido"
+                    objeto = parts[1].strip() if len(parts) > 1 else "Objeto Geral"
+                    
+                    extracted = extract_details_from_text(full_content)
+                    
+                    pending_bids.append({
+                        "orgao": orgao,
+                        "objeto": objeto,
+                        "data": match_date.group(0),
+                        "dias_restantes": bdays_left,
+                        "hora": extracted['hora'],
+                        "plataforma": extracted['plataforma']
+                    })
+        
+        # 2. SE HOUVER EDITAIS, ENVIA 1 E-MAIL AGREGADO
+        if pending_bids:
+            # Ordena por data (mais urgente primeiro)
+            pending_bids.sort(key=lambda x: x['dias_restantes'])
+            
+            # Monta linhas da tabela HTML
+            rows_html = ""
+            for bid in pending_bids:
+                color = "#d4edda" if bid['dias_restantes'] <= 1 else "#fff3cd" # Verde se urgente, Amarelo se atenção
+                msg_prazo = "🚨 É AMANHÃ/HOJE!" if bid['dias_restantes'] <= 1 else "⏳ 2 dias úteis"
+                
+                rows_html += f"""
+                <tr style="background-color: {color}; border-bottom: 1px solid #ddd;">
+                    <td style="padding: 10px;"><b>{bid['orgao']}</b><br><span style="font-size:12px; color:#555">{bid['objeto']}</span></td>
+                    <td style="padding: 10px; text-align:center;"><b>{bid['data']}</b><br>{bid['hora']}</td>
+                    <td style="padding: 10px; text-align:center;">{bid['plataforma']}</td>
+                    <td style="padding: 10px; text-align:center; font-weight:bold; color:#d9534f;">{msg_prazo}</td>
+                </tr>
+                """
+
+            # Monta Corpo do E-mail
+            email_body = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; color: #333;">
+                <div style="max-width: 600px; margin: 0 auto; border: 1px solid #eee; padding: 20px; border-radius: 8px;">
+                    <h2 style="color: #0044cc; text-align: center;">📅 Resumo de Licitações</h2>
+                    <p>Olá, <b>{name}</b>!</p>
+                    <p>Aqui está o resumo atualizado dos seus certames marcados como <b>APTO</b> para os próximos dias.</p>
+                    
+                    <table style="width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px;">
+                        <thead>
+                            <tr style="background-color: #0044cc; color: white;">
+                                <th style="padding: 10px; text-align: left;">Órgão / Objeto</th>
+                                <th style="padding: 10px;">Data / Hora</th>
+                                <th style="padding: 10px;">Plataforma</th>
+                                <th style="padding: 10px;">Prazo</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows_html}
+                        </tbody>
+                    </table>
+                    
+                    <p style="margin-top: 30px; font-size: 12px; color: #888; text-align: center;">
+                        Este resumo é gerado automaticamente às 08h e às 16h.<br>
+                        Urbano - Inteligência em Licitações
+                    </p>
+                </div>
+            </body>
+            </html>
+            """
+            
+            # Dispara
+            subject = f"📅 Resumo de Licitações: {len(pending_bids)} oportunidades próximas"
+            ok, msg = send_email(email, subject, email_body)
+            
+            status_icon = "✅" if ok else "❌"
+            # AQUI ESTÁ A MUDANÇA: Adicionamos 'msg' ao log se der erro
+            log_message = f"{status_icon} {username}: {len(pending_bids)} editais."
+            if not ok:
+                log_message += f" ERRO: {msg}"
+            
+            logs.append(log_message)
