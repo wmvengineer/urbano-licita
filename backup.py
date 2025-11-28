@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import database as db
 import extra_streamlit_components as stx
 from io import BytesIO
+import random  # <--- NOVA IMPORTAÇÃO PARA O CAPTCHA
 
 # --- LIBS PARA PDF E CALENDÁRIO ---
 from xhtml2pdf import pisa
@@ -186,27 +187,74 @@ if not st.session_state.user:
     with c2: st.title("Urbano - Inteligência em Licitações")
     
     t1, t2 = st.tabs(["Login", "Cadastro"])
+    
+    # --- ABA LOGIN ---
     with t1:
         with st.form("f_login"):
             u = st.text_input("Usuário"); p = st.text_input("Senha", type="password")
+            
+            # eCaptcha Login
+            if 'log_n1' not in st.session_state: st.session_state.log_n1 = random.randint(1, 9)
+            if 'log_n2' not in st.session_state: st.session_state.log_n2 = random.randint(1, 9)
+            
+            st.caption("Segurança")
+            col_cap1, col_cap2 = st.columns([0.4, 0.6])
+            with col_cap1:
+                st.markdown(f"**eCaptcha: {st.session_state.log_n1} + {st.session_state.log_n2} = ?**")
+            with col_cap2:
+                captcha_ans = st.number_input("Resultado", step=1, label_visibility="collapsed", key="in_cap_log")
+
             if st.form_submit_button("Entrar"):
-                ok, d = db.login_user(u, p)
-                if ok:
-                    st.session_state.user = {
-                        "username": d.get('username'), "name": d.get('name'),
-                        "role": d.get('role'), "plan": d.get('plan_type', 'free'),
-                        "credits": d.get('credits_used', 0), "token": d.get('token')
-                    }
-                    cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
+                # Validação Captcha
+                real_ans = st.session_state.log_n1 + st.session_state.log_n2
+                if captcha_ans != real_ans:
+                    st.error("eCaptcha incorreto. Tente novamente.")
+                    # Reseta números
+                    st.session_state.log_n1 = random.randint(1, 9)
+                    st.session_state.log_n2 = random.randint(1, 9)
+                    time.sleep(1)
                     st.rerun()
-                else: st.error("Erro no login.")
+                else:
+                    ok, d = db.login_user(u, p)
+                    if ok:
+                        st.session_state.user = {
+                            "username": d.get('username'), "name": d.get('name'),
+                            "role": d.get('role'), "plan": d.get('plan_type', 'free'),
+                            "credits": d.get('credits_used', 0), "token": d.get('token')
+                        }
+                        cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
+                        st.rerun()
+                    else: st.error("Erro no login.")
+    
+    # --- ABA CADASTRO ---
     with t2:
         with st.form("f_cad"):
             nu = st.text_input("Usuário"); nn = st.text_input("Nome"); ne = st.text_input("Email"); np = st.text_input("Senha", type="password")
+            
+            # eCaptcha Cadastro
+            if 'cad_n1' not in st.session_state: st.session_state.cad_n1 = random.randint(1, 9)
+            if 'cad_n2' not in st.session_state: st.session_state.cad_n2 = random.randint(1, 9)
+            
+            st.caption("Segurança")
+            col_cc1, col_cc2 = st.columns([0.4, 0.6])
+            with col_cc1:
+                st.markdown(f"**eCaptcha: {st.session_state.cad_n1} + {st.session_state.cad_n2} = ?**")
+            with col_cc2:
+                cad_captcha_ans = st.number_input("Resultado", step=1, label_visibility="collapsed", key="in_cap_cad")
+
             if st.form_submit_button("Criar Conta"):
-                ok, m = db.register_user(nu, nn, ne, np)
-                if ok: st.success("Criado! Faça login."); time.sleep(1)
-                else: st.error(m)
+                # Validação Captcha
+                real_cad_ans = st.session_state.cad_n1 + st.session_state.cad_n2
+                if cad_captcha_ans != real_cad_ans:
+                    st.error("eCaptcha incorreto.")
+                    st.session_state.cad_n1 = random.randint(1, 9)
+                    st.session_state.cad_n2 = random.randint(1, 9)
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    ok, m = db.register_user(nu, nn, ne, np)
+                    if ok: st.success("Criado! Faça login."); time.sleep(1)
+                    else: st.error(m)
     st.stop()
 
 # --- ÁREA LOGADA ---
@@ -377,7 +425,61 @@ elif menu == "Análise de Editais":
     if not st.session_state.analise_atual:
         if user['credits'] >= limit: st.warning("Limite atingido."); st.stop()
         
+        # [MODIFICAÇÃO] CSS para traduzir o File Uploader (Instruções + Botão "Browse files")
+        st.markdown("""
+            <style>
+            /* Esconde textos originais de instrução */
+            [data-testid='stFileUploaderDropzoneInstructions'] > div > span {
+                display: none;
+            }
+            [data-testid='stFileUploaderDropzoneInstructions'] > div > small {
+                display: none;
+            }
+            /* Insere texto traduzido de instrução */
+            [data-testid='stFileUploaderDropzoneInstructions'] > div::after {
+                content: "Arraste e solte arquivos aqui \\A Limite 25MB por arquivo • PDF";
+                white-space: pre-wrap;
+                text-align: center;
+                display: block;
+                color: rgba(49, 51, 63, 0.6);
+                font-size: 14px;
+            }
+            
+            /* Tradução do Botão "Browse files" */
+            [data-testid='stFileUploader'] button {
+                color: transparent !important; /* Oculta texto original */
+                position: relative;
+                min-width: 180px; /* Garante tamanho para o texto em PT */
+            }
+            [data-testid='stFileUploader'] button::after {
+                content: "Procurar arquivos";
+                color: rgb(49, 51, 63); /* Cor original do texto */
+                font-size: 14px;
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+                display: flex;
+                align-items: center;    /* Sintaxe corrigida para centralizar verticalmente */
+                justify-content: center; /* Sintaxe corrigida para centralizar horizontalmente */
+                pointer-events: none;
+            }
+            </style>
+        """, unsafe_allow_html=True)
+
         ups = st.file_uploader("Upload Edital + Anexos", type=["pdf"], accept_multiple_files=True)
+        
+        # [MODIFICAÇÃO] Validação de Tamanho (25MB)
+        valid_files = []
+        if ups:
+            for up in ups:
+                if up.size > 25 * 1024 * 1024:
+                    st.error(f"⚠️ O arquivo '{up.name}' excede o limite de 25MB e foi ignorado.")
+                else:
+                    valid_files.append(up)
+            ups = valid_files
+
         if ups and st.button("🚀 Iniciar Auditoria IA"):
             with st.status("Processando...", expanded=True) as status:
                 try:
@@ -395,7 +497,7 @@ elif menu == "Análise de Editais":
                     status.write("Gerando Relatório Detalhado (14 Pontos)...")
                     model = genai.GenerativeModel('gemini-pro-latest')
                     
-                    # PROMPT ATUALIZADO COM INSTRUÇÃO EXPLÍCITA DA DATA
+                    # PROMPT
                     prompt = """
                     ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA.
                     Analise TODOS os documentos fornecidos (Edital e Anexos) com extremo rigor.

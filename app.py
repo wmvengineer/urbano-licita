@@ -178,83 +178,224 @@ def logout():
     time.sleep(1)
     st.rerun()
 
-# --- TELA DE LOGIN ---
+# --- TELA DE LOGIN (Redesign V3) ---
 if not st.session_state.user:
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        if os.path.exists("LOGO URBANO OFICIAL.png"): st.image("LOGO URBANO OFICIAL.png", width=150)
-        else: st.title("🏢")
-    with c2: st.title("Urbano - Inteligência em Licitações")
-    
-    t1, t2 = st.tabs(["Login", "Cadastro"])
-    
-    # --- ABA LOGIN ---
-    with t1:
-        with st.form("f_login"):
-            u = st.text_input("Usuário"); p = st.text_input("Senha", type="password")
-            
-            # eCaptcha Login
-            if 'log_n1' not in st.session_state: st.session_state.log_n1 = random.randint(1, 9)
-            if 'log_n2' not in st.session_state: st.session_state.log_n2 = random.randint(1, 9)
-            
-            st.caption("Segurança")
-            col_cap1, col_cap2 = st.columns([0.4, 0.6])
-            with col_cap1:
-                st.markdown(f"**eCaptcha: {st.session_state.log_n1} + {st.session_state.log_n2} = ?**")
-            with col_cap2:
-                captcha_ans = st.number_input("Resultado", step=1, label_visibility="collapsed", key="in_cap_log")
+    # Injeção de CSS para replicar o estilo Login V3
+    st.markdown("""
+        <style>
+        /* Importando Fonte Poppins */
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&display=swap');
 
-            if st.form_submit_button("Entrar"):
-                # Validação Captcha
-                real_ans = st.session_state.log_n1 + st.session_state.log_n2
-                if captcha_ans != real_ans:
-                    st.error("eCaptcha incorreto. Tente novamente.")
-                    # Reseta números
-                    st.session_state.log_n1 = random.randint(1, 9)
-                    st.session_state.log_n2 = random.randint(1, 9)
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    ok, d = db.login_user(u, p)
-                    if ok:
-                        st.session_state.user = {
-                            "username": d.get('username'), "name": d.get('name'),
-                            "role": d.get('role'), "plan": d.get('plan_type', 'free'),
-                            "credits": d.get('credits_used', 0), "token": d.get('token')
-                        }
-                        cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
+        /* Fundo da Página (Imagem de Fundo) */
+        .stApp {
+            background-image: url('https://colorlib.com/etc/lf/Login_v3/images/bg-01.jpg');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        /* Ocultar elementos padrão do Streamlit para limpar a tela */
+        header {visibility: hidden;}
+        footer {visibility: hidden;}
+        .block-container {
+            padding-top: 5rem;
+            padding-bottom: 5rem;
+        }
+
+        /* Container Principal do Formulário (Mimica .wrap-login100) */
+        div[data-testid="stForm"] {
+            border-radius: 10px;
+            padding: 55px 55px 37px 55px;
+            overflow: hidden;
+            background: #9152f8;
+            background: -webkit-linear-gradient(top, #7579ff, #b224ef);
+            background: -o-linear-gradient(top, #7579ff, #b224ef);
+            background: -moz-linear-gradient(top, #7579ff, #b224ef);
+            background: linear-gradient(top, #7579ff, #b224ef);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            border: none;
+        }
+
+        /* Estilização dos Inputs (Linha inferior, texto branco) */
+        div[data-testid="stTextInput"] label, div[data-testid="stNumberInput"] label {
+            color: #eeeeee !important;
+            font-family: 'Poppins', sans-serif;
+            font-size: 13px;
+        }
+        
+        div[data-testid="stTextInput"] input, div[data-testid="stNumberInput"] input {
+            background-color: transparent !important;
+            color: #fff !important;
+            border: none !important;
+            border-bottom: 2px solid rgba(255,255,255,0.24) !important;
+            border-radius: 0px !important;
+            padding-left: 5px !important;
+            font-family: 'Poppins', sans-serif;
+        }
+        
+        div[data-testid="stTextInput"] input:focus, div[data-testid="stNumberInput"] input:focus {
+            border-bottom: 2px solid #fff !important;
+            box-shadow: none !important;
+        }
+
+        /* Estilização do Botão (Arredondado, branco/hover escuro) */
+        div.stButton > button {
+            font-family: 'Poppins', sans-serif;
+            font-size: 16px;
+            color: #555555 !important;
+            line-height: 1.2;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 0 20px;
+            min-width: 120px;
+            height: 50px;
+            border-radius: 25px;
+            background: #fff !important;
+            border: none !important;
+            width: 100%;
+            margin-top: 20px;
+            font-weight: 600;
+            transition: all 0.4s;
+        }
+        div.stButton > button:hover {
+            background-color: #333 !important;
+            color: #fff !important;
+        }
+        div.stButton > button:active {
+            background-color: #333 !important;
+            color: #fff !important;
+        }
+
+        /* Abas (Login/Cadastro) customizadas para o fundo roxo */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 20px;
+            justify-content: center;
+            margin-bottom: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+        }
+        .stTabs [data-baseweb="tab"] {
+            color: rgba(255,255,255,0.6);
+            font-family: 'Poppins', sans-serif;
+            font-size: 16px;
+            border: none;
+            background-color: transparent;
+        }
+        .stTabs [aria-selected="true"] {
+            color: #fff !important;
+            font-weight: bold;
+            border-bottom: 2px solid #fff;
+        }
+        .stTabs [data-baseweb="tab-highlight"] {
+            background-color: #fff;
+        }
+
+        /* Alerts */
+        div[data-baseweb="notification"] {
+            background-color: rgba(255, 255, 255, 0.9);
+            border-radius: 10px;
+        }
+        
+        /* Centralizar colunas */
+        [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
+            align-items: center;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Centralização do Card de Login usando colunas
+    col_spacer_l, col_login, col_spacer_r = st.columns([1, 1.5, 1])
+    
+    with col_login:
+        # Cabeçalho Visual (Logo e Título)
+        st.markdown("""
+            <div style="text-align: center; margin-bottom: 30px;">
+                <div style="
+                    font-size: 50px;
+                    color: #333;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    width: 100px;
+                    height: 100px;
+                    border-radius: 50%;
+                    background-color: #fff;
+                    margin: 0 auto;
+                ">
+                    🏢
+                </div>
+                <h1 style="color: white; font-family: 'Poppins'; text-transform: uppercase; margin-top: 20px; font-size: 28px; font-weight: 500;">
+                    Urbano
+                </h1>
+            </div>
+        """, unsafe_allow_html=True)
+
+        t1, t2 = st.tabs(["ENTRAR", "CRIAR CONTA"])
+        
+        # --- ABA LOGIN ---
+        with t1:
+            with st.form("f_login"):
+                u = st.text_input("Usuário", placeholder="Digite seu usuário")
+                p = st.text_input("Senha", type="password", placeholder="Digite sua senha")
+                
+                # eCaptcha Login
+                if 'log_n1' not in st.session_state: st.session_state.log_n1 = random.randint(1, 9)
+                if 'log_n2' not in st.session_state: st.session_state.log_n2 = random.randint(1, 9)
+                
+                # Layout compacto para o Captcha
+                st.markdown(f"<p style='color: white; font-size: 12px; margin-bottom: 0px; margin-top: 15px;'>Segurança: Quanto é {st.session_state.log_n1} + {st.session_state.log_n2}?</p>", unsafe_allow_html=True)
+                captcha_ans = st.number_input("Resultado Captcha", step=1, label_visibility="collapsed", key="in_cap_log")
+
+                if st.form_submit_button("LOGIN"):
+                    # Validação Captcha
+                    real_ans = st.session_state.log_n1 + st.session_state.log_n2
+                    if captcha_ans != real_ans:
+                        st.error("eCaptcha incorreto.")
+                        st.session_state.log_n1 = random.randint(1, 9)
+                        st.session_state.log_n2 = random.randint(1, 9)
+                        time.sleep(1)
                         st.rerun()
-                    else: st.error("Erro no login.")
-    
-    # --- ABA CADASTRO ---
-    with t2:
-        with st.form("f_cad"):
-            nu = st.text_input("Usuário"); nn = st.text_input("Nome"); ne = st.text_input("Email"); np = st.text_input("Senha", type="password")
-            
-            # eCaptcha Cadastro
-            if 'cad_n1' not in st.session_state: st.session_state.cad_n1 = random.randint(1, 9)
-            if 'cad_n2' not in st.session_state: st.session_state.cad_n2 = random.randint(1, 9)
-            
-            st.caption("Segurança")
-            col_cc1, col_cc2 = st.columns([0.4, 0.6])
-            with col_cc1:
-                st.markdown(f"**eCaptcha: {st.session_state.cad_n1} + {st.session_state.cad_n2} = ?**")
-            with col_cc2:
-                cad_captcha_ans = st.number_input("Resultado", step=1, label_visibility="collapsed", key="in_cap_cad")
+                    else:
+                        ok, d = db.login_user(u, p)
+                        if ok:
+                            st.session_state.user = {
+                                "username": d.get('username'), "name": d.get('name'),
+                                "role": d.get('role'), "plan": d.get('plan_type', 'free'),
+                                "credits": d.get('credits_used', 0), "token": d.get('token')
+                            }
+                            cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
+                            st.rerun()
+                        else: st.error("Erro no login.")
+        
+        # --- ABA CADASTRO ---
+        with t2:
+            with st.form("f_cad"):
+                nu = st.text_input("Usuário", placeholder="Escolha um usuário")
+                nn = st.text_input("Nome", placeholder="Seu nome completo")
+                ne = st.text_input("Email", placeholder="Seu melhor e-mail")
+                np = st.text_input("Senha", type="password", placeholder="Escolha uma senha")
+                
+                # eCaptcha Cadastro
+                if 'cad_n1' not in st.session_state: st.session_state.cad_n1 = random.randint(1, 9)
+                if 'cad_n2' not in st.session_state: st.session_state.cad_n2 = random.randint(1, 9)
+                
+                st.markdown(f"<p style='color: white; font-size: 12px; margin-bottom: 0px; margin-top: 15px;'>Segurança: Quanto é {st.session_state.cad_n1} + {st.session_state.cad_n2}?</p>", unsafe_allow_html=True)
+                cad_captcha_ans = st.number_input("Resultado Captcha Cad", step=1, label_visibility="collapsed", key="in_cap_cad")
 
-            if st.form_submit_button("Criar Conta"):
-                # Validação Captcha
-                real_cad_ans = st.session_state.cad_n1 + st.session_state.cad_n2
-                if cad_captcha_ans != real_cad_ans:
-                    st.error("eCaptcha incorreto.")
-                    st.session_state.cad_n1 = random.randint(1, 9)
-                    st.session_state.cad_n2 = random.randint(1, 9)
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    ok, m = db.register_user(nu, nn, ne, np)
-                    if ok: st.success("Criado! Faça login."); time.sleep(1)
-                    else: st.error(m)
+                if st.form_submit_button("CADASTRAR"):
+                    # Validação Captcha
+                    real_cad_ans = st.session_state.cad_n1 + st.session_state.cad_n2
+                    if cad_captcha_ans != real_cad_ans:
+                        st.error("eCaptcha incorreto.")
+                        st.session_state.cad_n1 = random.randint(1, 9)
+                        st.session_state.cad_n2 = random.randint(1, 9)
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        ok, m = db.register_user(nu, nn, ne, np)
+                        if ok: st.success("Criado! Faça login."); time.sleep(1)
+                        else: st.error(m)
     st.stop()
 
 # --- ÁREA LOGADA ---

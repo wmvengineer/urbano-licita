@@ -7,7 +7,7 @@ import streamlit as st
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from email.utils import formataddr # Importação necessária para formatar Nome <email> corretamente
+from email.utils import formataddr 
 import re
 import pandas as pd
 
@@ -277,8 +277,6 @@ def send_email(to_email, subject, body_html):
         msg = MIMEMultipart()
         
         # ATUALIZAÇÃO: Uso de formataddr para "Nome <email>" sem erro 553
-        # Isso garante que caracteres especiais (ç, ã) sejam codificados corretamente
-        # e o servidor aceite o remetente.
         msg['From'] = formataddr(("Urbano Soluções Integradas", sender_email))
         
         msg['To'] = to_email
@@ -288,8 +286,6 @@ def send_email(to_email, subject, body_html):
 
         with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
             server.login(sender_email, sender_password)
-            # Envio direto (envelope) para evitar bloqueio de relay, 
-            # mas mantendo o cabeçalho personalizado acima para o cliente ver o nome.
             server.sendmail(sender_email, to_email, msg.as_string())
         
         return True, "Enviado"
@@ -316,6 +312,10 @@ def extract_details_from_text(full_text):
     match_plat = re.search(r"(?:plataforma|portal|sítio eletrônico|endereço eletrônico).*?[:\-\?]\s*(.*?)(?:\n|\.|,)", full_text, re.IGNORECASE)
     if match_plat:
         clean = match_plat.group(1).strip()[:50] # Limita caracteres
+        
+        # Limpeza de prefixos de URL
+        clean = clean.replace("https://", "").replace("http://", "").replace("www.", "").rstrip("/")
+        
         if len(clean) > 3: details["plataforma"] = clean
         
     # Tenta achar horário (padrão HH:MM ou HHhMM)
@@ -401,11 +401,12 @@ def check_deadlines_and_notify():
                 color = "#d4edda" if bid['dias_restantes'] <= 1 else "#fff3cd" # Verde se urgente, Amarelo se atenção
                 msg_prazo = "🚨 É AMANHÃ/HOJE!" if bid['dias_restantes'] <= 1 else "⏳ 2 dias úteis"
                 
+                # ATUALIZADO: Coluna 'Plataforma' removida, 'Objeto' adicionado no lugar, 'Órgão' limpo.
                 rows_html += f"""
                 <tr style="background-color: {color}; border-bottom: 1px solid #ddd;">
-                    <td style="padding: 10px;"><b>{bid['orgao']}</b><br><span style="font-size:12px; color:#555">{bid['objeto']}</span></td>
+                    <td style="padding: 10px;"><b>{bid['orgao']}</b></td>
                     <td style="padding: 10px; text-align:center;"><b>{bid['data']}</b><br>{bid['hora']}</td>
-                    <td style="padding: 10px; text-align:center;">{bid['plataforma']}</td>
+                    <td style="padding: 10px; font-size: 13px; color: #333;">{bid['objeto']}</td>
                     <td style="padding: 10px; text-align:center; font-weight:bold; color:#d9534f;">{msg_prazo}</td>
                 </tr>
                 """
@@ -422,9 +423,9 @@ def check_deadlines_and_notify():
                     <table style="width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px;">
                         <thead>
                             <tr style="background-color: #0044cc; color: white;">
-                                <th style="padding: 10px; text-align: left;">Órgão / Objeto</th>
+                                <th style="padding: 10px; text-align: left;">Órgão</th>
                                 <th style="padding: 10px;">Data / Hora</th>
-                                <th style="padding: 10px;">Plataforma</th>
+                                <th style="padding: 10px;">Objeto</th>
                                 <th style="padding: 10px;">Prazo</th>
                             </tr>
                         </thead>
@@ -432,6 +433,13 @@ def check_deadlines_and_notify():
                             {rows_html}
                         </tbody>
                     </table>
+                    
+                    <div style="text-align: center; margin-top: 30px; margin-bottom: 20px;">
+                        <a href="https://urbano-licita-5idyvxrxmw58ucexzbuwwm.streamlit.app/" target="_blank"
+                           style="background-color: #0044cc; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold; font-size: 14px;">
+                           Acessar Plataforma Urbano
+                        </a>
+                    </div>
                     
                     <p style="margin-top: 30px; font-size: 12px; color: #888; text-align: center;">
                         Este resumo é gerado automaticamente às 08h e às 16h.<br>
