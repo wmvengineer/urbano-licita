@@ -291,8 +291,9 @@ def send_email(to_email, subject, body_html):
 def count_business_days_left(start_date, end_date):
     if start_date >= end_date: return 0
     try:
-        # Gera intervalo de dias úteis
-        bdays = pd.bdate_range(start=start_date, end=end_date)
+        # Freq='B' força dias úteis.
+        bdays = pd.bdate_range(start=start_date, end=end_date, freq='B')
+        # Subtrai 1 pois o range é inclusivo (Hoje -> Amanhã = 2 itens, mas 1 dia de prazo)
         return len(bdays) - 1
     except: return 999
 
@@ -323,7 +324,10 @@ def check_deadlines_and_notify():
     """
     logs = []
     users_ref = db.collection('users').stream()
-    today = datetime.datetime.now().date()
+    
+    # Ajuste de Fuso Horário Manual (UTC-3 para garantir data do Brasil)
+    now_br = datetime.datetime.now() - datetime.timedelta(hours=3)
+    today = now_br.date()
     
     # 1. VARRER USUÁRIOS
     for u in users_ref:
@@ -336,41 +340,51 @@ def check_deadlines_and_notify():
         
         # Lista para armazenar os editais deste usuário
         pending_bids = []
+        found_greens = 0
         
         # Busca histórico VERDE (Apto)
         docs = db.collection('users').document(username).collection('history').where('status', '==', 'green').stream()
         
         for doc in docs:
-            data = doc.to_dict()
-            title = data.get('title', 'Sem Título')
-            full_content = data.get('content', '')
-            
-            # Extrai Data
-            match_date = re.search(r"(\d{2})/(\d{2})/(\d{4})", title)
-            if match_date:
-                event_date_str = f"{match_date.group(3)}-{match_date.group(2)}-{match_date.group(1)}"
-                event_date = pd.to_datetime(event_date_str).date()
+            try:
+                found_greens += 1
+                data = doc.to_dict()
+                title = data.get('title', 'Sem Título')
+                full_content = data.get('content', '')
                 
-                bdays_left = count_business_days_left(today, event_date)
-                
-                # CRITÉRIO: Entre 0 e 2 dias úteis restantes
-                if 0 <= bdays_left <= 2:
+                # Extrai Data (Procura padrão DD/MM/YYYY em qualquer lugar do título)
+                match_date = re.search(r"(\d{2})/(\d{2})/(\d{4})", title)
+                if match_date:
+                    event_date_str = f"{match_date.group(3)}-{match_date.group(2)}-{match_date.group(1)}"
+                    event_date = pd.to_datetime(event_date_str).date()
                     
-                    # Extrai dados refinados para a tabela
-                    parts = title.split('|')
-                    orgao = parts[0].replace("Edital", "").strip() if len(parts) > 0 else "Indefinido"
-                    objeto = parts[1].strip() if len(parts) > 1 else "Objeto Geral"
+                    bdays_left = count_business_days_left(today, event_date)
                     
-                    extracted = extract_details_from_text(full_content)
-                    
-                    pending_bids.append({
-                        "orgao": orgao,
-                        "objeto": objeto,
-                        "data": match_date.group(0),
-                        "dias_restantes": bdays_left,
-                        "hora": extracted['hora'],
-                        "plataforma": extracted['plataforma']
-                    })
+                    # Log de debug para o admin ver o cálculo
+                    # (Remova se ficar muito poluído, mas útil agora)
+                    # logs.append(f"Debug {username}: {event_date_str} -> {bdays_left} dias úteis.")
+
+                    # CRITÉRIO: Entre 0 e 2 dias úteis restantes
+                    if 0 <= bdays_left <= 2:
+                        
+                        # Tenta extrair Órgão/Objeto do pipe, senão usa título todo
+                        parts = title.split('|')
+                        orgao = parts[0].replace("Edital", "").strip() if len(parts) > 1 else title[:30]
+                        objeto = parts[1].strip() if len(parts) > 1 else "Ver Detalhes"
+                        
+                        extracted = extract_details_from_text(full_content)
+                        
+                        pending_bids.append({
+                            "orgao": orgao,
+                            "objeto": objeto,
+                            "data": match_date.group(0),
+                            "dias_restantes": bdays_left,
+                            "hora": extracted['hora'],
+                            "plataforma": extracted['plataforma']
+                        })
+            except Exception as e_item:
+                print(f"Erro item {doc.id}: {e_item}")
+                continue
         
         # 2. SE HOUVER EDITAIS, ENVIA 1 E-MAIL AGREGADO
         if pending_bids:
@@ -429,9 +443,13 @@ def check_deadlines_and_notify():
             ok, msg = send_email(email, subject, email_body)
             
             status_icon = "✅" if ok else "❌"
-            # AQUI ESTÁ A MUDANÇA: Adicionamos 'msg' ao log se der erro
-            log_message = f"{status_icon} {username}: {len(pending_bids)} editais."
+            log_message = f"{status_icon} {username}: {len(pending_bids)} editais urgentes (de {found_greens} verdes)."
             if not ok:
-                log_message += f" ERRO: {msg}"
+                log_message += f" ERRO SMTP: {msg}"
             
             logs.append(log_message)
+        else:
+            if found_greens > 0:
+                logs.append(f"ℹ️ {username}: {found_greens} verdes analisados, nenhum no prazo (0-2 dias úteis).")
+    
+    return logs
