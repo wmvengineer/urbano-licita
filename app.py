@@ -425,15 +425,17 @@ elif menu == "Análise de Editais":
     if not st.session_state.analise_atual:
         if user['credits'] >= limit: st.warning("Limite atingido."); st.stop()
         
-        # [MODIFICAÇÃO] CSS para traduzir o File Uploader e ajustar visualmente o limite
+        # [MODIFICAÇÃO] CSS para traduzir o File Uploader (Instruções + Botão "Browse files")
         st.markdown("""
             <style>
+            /* Esconde textos originais de instrução */
             [data-testid='stFileUploaderDropzoneInstructions'] > div > span {
                 display: none;
             }
             [data-testid='stFileUploaderDropzoneInstructions'] > div > small {
                 display: none;
             }
+            /* Insere texto traduzido de instrução */
             [data-testid='stFileUploaderDropzoneInstructions'] > div::after {
                 content: "Arraste e solte arquivos aqui \\A Limite 25MB por arquivo • PDF";
                 white-space: pre-wrap;
@@ -442,12 +444,24 @@ elif menu == "Análise de Editais":
                 color: rgba(49, 51, 63, 0.6);
                 font-size: 14px;
             }
+            /* Tradução do Botão "Browse files" */
+            [data-testid='stFileUploader'] button {
+                color: transparent !important;
+            }
+            [data-testid='stFileUploader'] button::after {
+                content: "Procurar arquivos";
+                color: rgb(49, 51, 63);
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+            }
             </style>
         """, unsafe_allow_html=True)
 
         ups = st.file_uploader("Upload Edital + Anexos", type=["pdf"], accept_multiple_files=True)
         
-        # [MODIFICAÇÃO] Validação de Tamanho (25MB = ~26.214.400 bytes)
+        # [MODIFICAÇÃO] Validação de Tamanho (25MB)
         valid_files = []
         if ups:
             for up in ups:
@@ -455,7 +469,6 @@ elif menu == "Análise de Editais":
                     st.error(f"⚠️ O arquivo '{up.name}' excede o limite de 25MB e foi ignorado.")
                 else:
                     valid_files.append(up)
-            # Atualiza a lista apenas com os válidos
             ups = valid_files
 
         if ups and st.button("🚀 Iniciar Auditoria IA"):
@@ -475,7 +488,7 @@ elif menu == "Análise de Editais":
                     status.write("Gerando Relatório Detalhado (14 Pontos)...")
                     model = genai.GenerativeModel('gemini-pro-latest')
                     
-                    # PROMPT ATUALIZADO COM INSTRUÇÃO EXPLÍCITA DA DATA
+                    # PROMPT
                     prompt = """
                     ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA.
                     Analise TODOS os documentos fornecidos (Edital e Anexos) com extremo rigor.
