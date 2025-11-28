@@ -3,7 +3,7 @@ firebase-admin
 google-generativeai
 bcrypt
 extra-streamlit-components
-xhtml2pdf
+xhtml2pdf==0.2.11
 markdown
 pandas
 streamlit-calendar
