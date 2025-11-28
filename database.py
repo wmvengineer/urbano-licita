@@ -313,7 +313,7 @@ def extract_details_from_text(full_text):
     if match_plat:
         clean = match_plat.group(1).strip()[:50] # Limita caracteres
         
-        # [MODIFICAÇÃO] Limpeza de prefixos de URL para exibir apenas o nome
+        # Limpeza de prefixos de URL
         clean = clean.replace("https://", "").replace("http://", "").replace("www.", "").rstrip("/")
         
         if len(clean) > 3: details["plataforma"] = clean
@@ -401,16 +401,17 @@ def check_deadlines_and_notify():
                 color = "#d4edda" if bid['dias_restantes'] <= 1 else "#fff3cd" # Verde se urgente, Amarelo se atenção
                 msg_prazo = "🚨 É AMANHÃ/HOJE!" if bid['dias_restantes'] <= 1 else "⏳ 2 dias úteis"
                 
+                # ATUALIZADO: Coluna 'Plataforma' removida, 'Objeto' adicionado no lugar, 'Órgão' limpo.
                 rows_html += f"""
                 <tr style="background-color: {color}; border-bottom: 1px solid #ddd;">
-                    <td style="padding: 10px;"><b>{bid['orgao']}</b><br><span style="font-size:12px; color:#555">{bid['objeto']}</span></td>
+                    <td style="padding: 10px;"><b>{bid['orgao']}</b></td>
                     <td style="padding: 10px; text-align:center;"><b>{bid['data']}</b><br>{bid['hora']}</td>
-                    <td style="padding: 10px; text-align:center;">{bid['plataforma']}</td>
+                    <td style="padding: 10px; font-size: 13px; color: #333;">{bid['objeto']}</td>
                     <td style="padding: 10px; text-align:center; font-weight:bold; color:#d9534f;">{msg_prazo}</td>
                 </tr>
                 """
 
-            # Monta Corpo do E-mail (COM LINK NO FINAL)
+            # Monta Corpo do E-mail
             email_body = f"""
             <html>
             <body style="font-family: Arial, sans-serif; color: #333;">
@@ -422,9 +423,9 @@ def check_deadlines_and_notify():
                     <table style="width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px;">
                         <thead>
                             <tr style="background-color: #0044cc; color: white;">
-                                <th style="padding: 10px; text-align: left;">Órgão / Objeto</th>
+                                <th style="padding: 10px; text-align: left;">Órgão</th>
                                 <th style="padding: 10px;">Data / Hora</th>
-                                <th style="padding: 10px;">Plataforma</th>
+                                <th style="padding: 10px;">Objeto</th>
                                 <th style="padding: 10px;">Prazo</th>
                             </tr>
                         </thead>
