@@ -34,6 +34,20 @@ except:
 
 db.init_db()
 
+# --- CSS GLOBAL PARA OCULTAR RODAPÉ E MENU ---
+st.markdown("""
+    <style>
+    /* Oculta o menu de opções (três pontinhos no canto superior direito) */
+    #MainMenu {visibility: hidden;}
+    
+    /* Oculta o rodapé "Hosted with Streamlit" */
+    footer {visibility: hidden;}
+    
+    /* Opcional: Oculta a barra colorida no topo se desejar */
+    /* header {visibility: hidden;} */
+    </style>
+""", unsafe_allow_html=True)
+
 # --- AUTOMAÇÃO DE E-MAILS (Disparo Diário) ---
 try:
     if "daily_check_done" not in st.session_state:
