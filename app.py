@@ -833,7 +833,7 @@ elif menu == "Análise de Editais":
                             # 3. Preparar Prompt + Arquivos do Edital + Arquivos da Empresa
                             all_files = st.session_state.gemini_files_handles + company_ai_files
                             
-                            # ALTERAÇÃO: Instruções reforçadas para ler TODOS os arquivos e aplicar flexibilidade técnica
+                            # ALTERAÇÃO: Instruções para separar Operacional de Profissional
                             prompt_cross = """
                             ATUE COMO AUDITOR SÊNIOR E ESPECIALISTA EM ANÁLISE DOCUMENTAL DE ENGENHARIA.
                             
@@ -841,30 +841,31 @@ elif menu == "Análise de Editais":
                             Você possui acesso aos arquivos do EDITAL (primeiros arquivos) e aos arquivos da EMPRESA (últimos arquivos carregados).
                             Utilize visão computacional para ler documentos digitalizados/imagens.
                             
-                            DIRETRIZ 1: EXAUSTIVIDADE (LER TUDO)
-                            Você deve analisar **TODOS** os documentos fornecidos pela empresa (Atestados, Certidões, CATs, Balanços, etc.) sem exceção.
-                            Não conclua que um documento falta sem antes verificar cada arquivo enviado.
+                            DIRETRIZES GERAIS:
+                            1. LEITURA EXAUSTIVA: Analise TODOS os documentos fornecidos.
+                            2. FLEXIBILIDADE TÉCNICA: Aceite serviços similares/correlatos (não exija literalidade).
                             
-                            DIRETRIZ 2: FLEXIBILIDADE TÉCNICA (SEMÂNTICA)
-                            Na análise da Qualificação Técnica (Atestados e Certidões):
-                            1. NÃO se restrinja à literalidade dos termos escritos.
-                            2. Busque por **SIMILARIDADE TÉCNICA**, **NATUREZA DO SERVIÇO** e **COMPATIBILIDADE**.
-                            3. Se o edital pede um serviço "X" e o atestado/certidão apresenta "Y", mas tecnicamente "Y" é similar ou engloba "X", considere como VÁLIDO.
-                            (Exemplo: "Reforma geral" valida "Pintura"; "Pavimentação" valida "Tapa-buraco").
+                            ESTRUTURA DA RESPOSTA OBRIGATÓRIA (Siga esta ordem):
                             
-                            TAREFA:
-                            Realize um cruzamento rigoroso ("De/Para") entre as exigências do Edital e os documentos apresentados.
+                            1. **HABILITAÇÃO JURÍDICA E FISCAL**
+                               - Analise os itens solicitados vs documentos apresentados.
                             
-                            ESTRUTURA DA RESPOSTA:
-                            Para cada exigência de Habilitação (Jurídica, Fiscal, Técnica, Financeira):
-                            1. **Exigência**: [Cite o item do edital]
-                            2. **Documento(s) da Empresa**: [Cite qual(is) arquivo(s) analisado(s) atende(m) ao item]
-                            3. **Análise Técnica**: 
-                               - O documento é válido/vigente? 
-                               - Para Técnica: Explique a similaridade encontrada (Ex: "O serviço A no atestado é equivalente ao exigido B pois...").
-                            4. **Status**: ✅ APTO, ⚠️ ATENÇÃO ou ❌ INAPTO
+                            2. **QUALIFICAÇÃO TÉCNICA OPERACIONAL (EMPRESA)**
+                               - Foco: Atestados emitidos em nome da PESSOA JURÍDICA (Empresa).
+                               - Liste cada exigência de capacidade da empresa.
+                               - Documento Encontrado: Cite o atestado da empresa que atende (lembrando da similaridade técnica).
+                               - Status: ✅ APTO / ⚠️ / ❌
                             
-                            Ao final, dê um parecer geral sobre a viabilidade.
+                            3. **QUALIFICAÇÃO TÉCNICA PROFISSIONAL (EQUIPE TÉCNICA)**
+                               - Foco: CATs (Certidões de Acervo Técnico) e Atestados em nome da PESSOA FÍSICA (Engenheiro/Arquiteto).
+                               - Liste as exigências para o Responsável Técnico.
+                               - Documento Encontrado: Cite a CAT/Atestado do profissional que atende.
+                               - Status: ✅ APTO / ⚠️ / ❌
+                            
+                            4. **HABILITAÇÃO FINANCEIRA**
+                               - Analise Balanço, Índices e Garantias.
+                            
+                            5. **PARECER FINAL DE VIABILIDADE**
                             """
                             
                             model = genai.GenerativeModel('gemini-pro-latest')
@@ -1019,7 +1020,7 @@ elif menu == "📜 Histórico":
                                         temps.append(tp)
                                         gemini_files.append(genai.upload_file(tp, display_name=n))
                                     
-                                    # Prompt com Flexibilidade Técnica e Exaustividade
+                                    # 3. Prompt com Separação Técnica (Operacional vs Profissional)
                                     prompt_hist = f"""
                                     ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA. 
                                     Compare os documentos anexados da empresa com o seguinte resumo de edital:
@@ -1028,16 +1029,22 @@ elif menu == "📜 Histórico":
                                     {content_txt}
                                     --- FIM RESUMO EDITAL ---
                                     
-                                    DIRETRIZ 1: LEITURA COMPLETA
-                                    Analise **TODOS** os arquivos anexados da empresa (Atestados, Certidões/CATs, Jurídico, Fiscal). Não ignore nenhum documento.
+                                    DIRETRIZES:
+                                    1. Analise TODOS os documentos.
+                                    2. Aplique FLEXIBILIDADE TÉCNICA (serviços similares são aceitos).
                                     
-                                    DIRETRIZ 2: FLEXIBILIDADE TÉCNICA (ATESTADOS E CERTIDÕES)
-                                    Ao verificar a Qualificação Técnica, identifique serviços **SIMILARES** ou de **NATUREZA EQUIVALENTE**.
-                                    Não exija correspondência exata de nomes. Se o serviço descrito nos atestados/certidões for tecnicamente compatível com a exigência do edital, considere como atendimento ao item.
-                                    Justifique a correlação técnica encontrada.
+                                    TAREFA: Gere um Checklist de Viabilidade separado nas seguintes categorias OBRIGATÓRIAS:
                                     
-                                    Gere um Checklist de Viabilidade Detalhado:
-                                    Item do Edital pede X -> Empresa tem Y (Explique a similaridade técnica e cite o documento) -> Veredito (Apto/Inapto/Atenção).
+                                    A) QUALIFICAÇÃO TÉCNICA OPERACIONAL (EMPRESA)
+                                    - Verifique se a EMPRESA (PJ) possui os atestados ou certidões (CATs) exigidos.
+                                    - Item do Edital -> Documento da Empresa -> Veredito.
+                                    
+                                    B) QUALIFICAÇÃO TÉCNICA PROFISSIONAL (EQUIPE)
+                                    - Verifique se o PROFISSIONAL (PF) possui as certidões (CATs)/Atestados exigidos.
+                                    - Item do Edital -> Documento do Profissional -> Veredito.
+                                    
+                                    C) DEMAIS HABILITAÇÕES (Jurídica, Fiscal, Financeira)
+                                    - Verifique as demais exigências.
                                     """
                                     model = genai.GenerativeModel('gemini-pro-latest')
                                     resp = model.generate_content(gemini_files + [prompt_hist])
