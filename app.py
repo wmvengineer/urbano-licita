@@ -831,15 +831,21 @@ elif menu == "Análise de Editais":
                                 company_ai_files.append(ai_file)
                             
                             # 3. Preparar Prompt + Arquivos do Edital + Arquivos da Empresa
-                            # st.session_state.gemini_files_handles contém o Edital
                             all_files = st.session_state.gemini_files_handles + company_ai_files
                             
+                            # ALTERAÇÃO: Instrução específica de flexibilidade técnica adicionada ao prompt
                             prompt_cross = """
-                            ATUE COMO AUDITOR SÊNIOR E ESPECIALISTA EM ANÁLISE DOCUMENTAL.
+                            ATUE COMO AUDITOR SÊNIOR E ESPECIALISTA EM ANÁLISE DOCUMENTAL DE ENGENHARIA.
                             
                             CONTEXTO:
                             Você possui acesso aos arquivos do EDITAL (primeiros arquivos) e aos arquivos da EMPRESA (últimos arquivos carregados).
-                            Muitos documentos da empresa podem ser digitalizados/escaneados (imagens). Utilize sua capacidade de visão computacional para ler o conteúdo visualmente.
+                            Utilize visão computacional para ler documentos digitalizados/imagens.
+                            
+                            DIRETRIZ IMPORTANTE - QUALIFICAÇÃO TÉCNICA:
+                            Na análise dos Atestados de Capacidade Técnica (Operacional e Profissional), NÃO se restrinja à busca literal de palavras.
+                            Analise a **SEMELHANÇA TÉCNICA** e a **NATUREZA** dos serviços.
+                            Se o atestado descreve um serviço que, embora com nome diferente, possui a mesma complexidade técnica ou engloba o serviço exigido no edital, considere como VÁLIDO.
+                            (Exemplo: "Pavimentação Asfáltica" no atestado valida "CBUQ" no edital; "Reforma Predial" valida "Manutenção Civil").
                             
                             TAREFA:
                             Realize um cruzamento rigoroso ("De/Para") entre as exigências do Edital e os documentos apresentados.
@@ -848,8 +854,10 @@ elif menu == "Análise de Editais":
                             Para cada exigência de Habilitação (Jurídica, Fiscal, Técnica, Financeira):
                             1. **Exigência**: [Cite o item do edital]
                             2. **Documento da Empresa**: [Qual arquivo enviado atende? Se for imagem, descreva o que leu]
-                            3. **Análise**: O documento é válido? A data está vigente? O atestado comprova a técnica exigida?
-                            4. **Status**: ✅ APTO, ⚠️ ATENÇÃO (ex: vencendo) ou ❌ INAPTO (não encontrado/invalido)
+                            3. **Análise Técnica**: 
+                               - O documento é válido/vigente? 
+                               - Para Atestados: O serviço executado guarda similaridade técnica com o exigido? (Justifique a correlação se os termos forem diferentes).
+                            4. **Status**: ✅ APTO, ⚠️ ATENÇÃO ou ❌ INAPTO
                             
                             Ao final, dê um parecer geral sobre a viabilidade.
                             """
@@ -1006,16 +1014,21 @@ elif menu == "📜 Histórico":
                                         temps.append(tp)
                                         gemini_files.append(genai.upload_file(tp, display_name=n))
                                     
-                                    # 3. Gerar Análise
+                                    # 3. Gerar Análise com Flexibilidade Técnica
                                     prompt_hist = f"""
-                                    ATUE COMO AUDITOR. 
+                                    ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA. 
                                     Compare os documentos anexados da empresa com o seguinte resumo de edital:
                                     
                                     --- INÍCIO RESUMO EDITAL ---
                                     {content_txt}
                                     --- FIM RESUMO EDITAL ---
                                     
-                                    Gere um Checklist de Viabilidade: Item do Edital pede X -> Empresa tem Y -> Veredito (Apto/Inapto/Atenção).
+                                    DIRETRIZ DE FLEXIBILIDADE TÉCNICA (ATESTADOS):
+                                    Ao verificar a Qualificação Técnica, identifique serviços **SIMILARES** ou **CORRELATOS**.
+                                    Não exija correspondência exata de termos. Se o serviço descrito nos documentos da empresa for tecnicamente compatível com a exigência do edital (mesmo com nomenclatura distinta), considere como atendimento ao item.
+                                    
+                                    Gere um Checklist de Viabilidade Detalhado:
+                                    Item do Edital pede X -> Empresa tem Y (Explique a similaridade técnica encontrada, se houver) -> Veredito (Apto/Inapto/Atenção).
                                     """
                                     model = genai.GenerativeModel('gemini-pro-latest')
                                     resp = model.generate_content(gemini_files + [prompt_hist])
