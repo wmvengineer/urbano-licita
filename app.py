@@ -925,7 +925,6 @@ elif menu == "📜 Histórico":
             
             table_data = []
             for item in lst:
-                # Extração simples para a tabela de gestão
                 raw_t = extract_title(item['content'])
                 d_str = item['created_at'].strftime("%d/%m/%Y")
                 table_data.append({"id": item['id'], "Excluir": False, "Data": d_str, "Título": raw_t})
@@ -955,7 +954,7 @@ elif menu == "📜 Histórico":
         
         st.divider()
 
-    # --- LISTAGEM COM NOVO PADRÃO: {Data Cons}| Edital | {Órgão} | {Objeto} | {Data Sess} ---
+    # --- LISTAGEM COM EXTRAÇÃO APRIMORADA DO OBJETO ---
     for item in lst:
         chat_key = f"hist_chat_{item['id']}"
         if chat_key not in st.session_state: st.session_state[chat_key] = []
@@ -964,26 +963,56 @@ elif menu == "📜 Histórico":
         dt_consulta = item['created_at'].strftime("%d/%m/%Y")
         content_txt = item['content']
         
-        # Extrair Órgão Licitante
-        match_org = re.search(r"(?:1\.|órgão).*?[:\-\?]\s*(.*?)(?:\n|2\.|Qual|$)", content_txt, re.IGNORECASE)
-        orgao = match_org.group(1).replace("*", "").strip() if match_org else "Órgão Indefinido"
+        # Extrair Órgão Licitante (Busca texto entre "1." e "2.")
+        orgao = "Órgão Indefinido"
+        try:
+            # Tenta pegar tudo entre "1." e "2."
+            if "1." in content_txt and "2." in content_txt:
+                part_org = content_txt.split("1.")[1].split("2.")[0]
+                # Limpa supostos cabeçalhos da pergunta
+                part_org = part_org.replace("Qual o nome do órgão contratante?", "").replace("Nome do órgão", "").strip()
+                orgao = part_org.replace("*", "").replace("#", "").strip()[:50]
+        except:
+            pass # Mantém Indefinido se falhar
         
-        # Extrair Objeto do Edital (Corrigido para limpar '(Resumo completo)')
-        match_obj = re.search(r"(?:2\.|objeto).*?[:\-\?]\s*(.*?)(?:\n|3\.|valor|Qual|$)", content_txt, re.IGNORECASE | re.DOTALL)
+        # Extrair Objeto do Edital (Busca texto entre "2." e "3." - TÉCNICA MAIS ROBUSTA)
         objeto_edital = "Objeto Indefinido"
-        
-        if match_obj:
-            raw_o = match_obj.group(1)
-            # Limpeza agressiva para remover o texto da pergunta que a IA às vezes repete
-            raw_o = raw_o.replace("*", "").replace("\n", " ").replace("(Resumo completo)", "").replace("Qual o objeto do edital?", "").strip()
-            # Limita tamanho para visualização
-            objeto_edital = (raw_o[:75] + '...') if len(raw_o) > 75 else raw_o
+        try:
+            if "2." in content_txt and "3." in content_txt:
+                # Corta o texto exatamente onde começa a resposta 2 e termina antes da 3
+                raw_chunk = content_txt.split("2.")[1].split("3.")[0]
+                
+                # Lista de "Lixos" que a IA costuma repetir e precisamos remover
+                garbage = [
+                    "Qual o objeto do edital?", 
+                    "(Resumo completo)", 
+                    "Objeto:", 
+                    "**", 
+                    "##",
+                    "Resumo:",
+                    "Trata-se de"
+                ]
+                
+                clean_chunk = raw_chunk
+                for g in garbage:
+                    clean_chunk = clean_chunk.replace(g, "")
+                
+                # Remove pontuação inicial (ex: ": A contratação...") e espaços
+                clean_chunk = clean_chunk.strip().lstrip(":- ").strip()
+                
+                # Pega os primeiros 80 caracteres para o título
+                if len(clean_chunk) > 3:
+                    objeto_edital = (clean_chunk[:80] + '...') if len(clean_chunk) > 80 else clean_chunk
+        except:
+            # Fallback se a numeração falhar
+            match_obj = re.search(r"objeto.*?[:\-\?]\s*(.*?)(?:\n|$)", content_txt, re.IGNORECASE)
+            if match_obj: objeto_edital = match_obj.group(1)[:50]
 
         # Extrair Data Sessão
         match_sessao = re.search(r"DATA_CHAVE:\s*(\d{2}/\d{2}/\d{4})", content_txt)
         dt_sessao = match_sessao.group(1) if match_sessao else "Data Pendente"
 
-        # TÍTULO FORMATADO: {Data da Consulta}| Edital | {Órgão Licitante} | {Objeto do edital} | {Data da Sessão}
+        # TÍTULO FORMATADO
         full_display_title = f"{dt_consulta} | Edital | {orgao} | {objeto_edital} | {dt_sessao}"
         
         # Aplicação de Cores baseada no Status
@@ -1023,7 +1052,7 @@ elif menu == "📜 Histórico":
                                         temps.append(tp)
                                         gemini_files.append(genai.upload_file(tp, display_name=n))
                                     
-                                    # Prompt com Separação Técnica (Operacional vs Profissional)
+                                    # Prompt com Separação Técnica
                                     prompt_hist = f"""
                                     ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA. 
                                     Compare os documentos anexados da empresa com o seguinte resumo de edital:
