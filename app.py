@@ -160,24 +160,35 @@ def render_status_controls(item_id, current_status, current_note):
 
 # --- SESSÃO & COOKIES ---
 cookie_manager = stx.CookieManager(key="urbano_cookies")
-if 'user' not in st.session_state: st.session_state.user = None
 
+# Garante a inicialização da variável de sessão
+if 'user' not in st.session_state: 
+    st.session_state.user = None
+
+# Se o usuário não estiver na memória (refresh), tenta recuperar do cookie
 if not st.session_state.user:
-    time.sleep(0.1)
-    c = cookie_manager.get("urbano_auth")
-    if c:
+    # Aumentado para 0.4s para garantir que o navegador envie o cookie antes da verificação
+    time.sleep(0.4)
+    
+    auth_cookie = cookie_manager.get("urbano_auth")
+    
+    if auth_cookie:
         try:
-            u, t = c.split('|')
+            u, t = auth_cookie.split('|')
             if db.check_session_valid(u, t):
                 raw = db.get_user_by_username(u)
                 if raw:
                     st.session_state.user = {
-                        "username": raw.get('username'), "name": raw.get('name'),
-                        "role": raw.get('role'), "plan": raw.get('plan_type', 'free'),
-                        "credits": raw.get('credits_used', 0), "token": raw.get('token')
+                        "username": raw.get('username'), 
+                        "name": raw.get('name'),
+                        "role": raw.get('role'), 
+                        "plan": raw.get('plan_type', 'free'),
+                        "credits": raw.get('credits_used', 0), 
+                        "token": raw.get('token')
                     }
                     st.rerun()
-        except: pass
+        except:
+            pass
 
 def logout():
     st.session_state.user = None
