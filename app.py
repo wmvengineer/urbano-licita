@@ -34,17 +34,32 @@ except:
 
 db.init_db()
 
-# --- CSS GLOBAL PARA OCULTAR RODAPÉ E MENU ---
+# --- CSS "NUCLEAR" PARA OCULTAR RODAPÉ E MENU ---
 st.markdown("""
     <style>
-    /* Oculta o menu de opções (três pontinhos no canto superior direito) */
-    #MainMenu {visibility: hidden;}
-    
-    /* Oculta o rodapé "Hosted with Streamlit" */
-    footer {visibility: hidden;}
-    
-    /* Opcional: Oculta a barra colorida no topo se desejar */
-    /* header {visibility: hidden;} */
+        /* Remove o rodapé padrão */
+        footer {
+            display: none !important;
+            visibility: hidden !important;
+        }
+
+        /* Remove a barra superior colorida (header) caso apareça */
+        header {
+            display: none !important;
+            visibility: hidden !important;
+        }
+
+        /* Remove o menu de opções (três pontinhos) */
+        #MainMenu {
+            display: none !important;
+            visibility: hidden !important;
+        }
+        
+        /* Remove especificamente a classe que contém o "Built with Streamlit" 
+           (caso o seletor 'footer' não pegue por alguma atualização) */
+        [data-testid="stFooter"] {
+            display: none !important;
+        }
     </style>
 """, unsafe_allow_html=True)
 
