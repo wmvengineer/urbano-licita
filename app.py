@@ -861,78 +861,142 @@ elif menu == "📜 Histórico":
     if not lst: 
         st.info("Vazio.")
     else:
-        # --- NOVA FUNÇÃO: EXCLUSÃO EM MASSA ---
+        # --- EXCLUSÃO EM MASSA (MANTIDO) ---
         with st.expander("🗑️ Gerenciar / Excluir Vários"):
             st.caption("Selecione os itens que deseja excluir permanentemente e clique no botão abaixo.")
             
-            # Prepara os dados para a tabela
             table_data = []
             for item in lst:
+                # Extração simples para a tabela de gestão
                 raw_t = extract_title(item['content'])
                 d_str = item['created_at'].strftime("%d/%m/%Y")
-                table_data.append({
-                    "id": item['id'],
-                    "Excluir": False,
-                    "Data": d_str,
-                    "Título": raw_t
-                })
+                table_data.append({"id": item['id'], "Excluir": False, "Data": d_str, "Título": raw_t})
             
             df_hist = pd.DataFrame(table_data)
-            
-            # Exibe a tabela editável
             edited_df = st.data_editor(
                 df_hist,
                 column_config={
-                    "id": None, # Oculta o ID visualmente
+                    "id": None, 
                     "Excluir": st.column_config.CheckboxColumn("Selecionar", default=False, width="small"),
                     "Data": st.column_config.TextColumn("Data", disabled=True, width="small"),
                     "Título": st.column_config.TextColumn("Edital", disabled=True, width="large")
                 },
-                hide_index=True,
-                use_container_width=True,
-                key="editor_mass_delete"
+                hide_index=True, use_container_width=True, key="editor_mass_delete"
             )
             
-            # Botão de Ação
             if st.button("🗑️ Excluir Selecionados", type="primary"):
                 selected_rows = edited_df[edited_df["Excluir"] == True]
-                
                 if not selected_rows.empty:
                     count_del = 0
                     with st.spinner("Excluindo itens..."):
                         for index, row in selected_rows.iterrows():
-                            if db.delete_history_item(user['username'], row['id']):
-                                count_del += 1
-                    
+                            if db.delete_history_item(user['username'], row['id']): count_del += 1
                     if count_del > 0:
-                        st.success(f"{count_del} análises excluídas com sucesso!")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.error("Erro ao tentar excluir os itens.")
-                else:
-                    st.warning("Nenhum item selecionado.")
+                        st.success(f"{count_del} análises excluídas!"); time.sleep(1); st.rerun()
+                else: st.warning("Nenhum item selecionado.")
         
         st.divider()
 
-    # --- LISTAGEM PADRÃO (CÓDIGO ORIGINAL MANTIDO) ---
+    # --- LISTAGEM COM NOVO PADRÃO DE TÍTULO E CRUZAMENTO ---
     for item in lst:
         chat_key = f"hist_chat_{item['id']}"
         if chat_key not in st.session_state: st.session_state[chat_key] = []
-        dt = item['created_at'].strftime("%d/%m/%Y")
         
-        raw_title = extract_title(item['content'])
+        # 1. Extração de Dados para o Título Personalizado
+        dt_consulta = item['created_at'].strftime("%d/%m/%Y")
+        content_txt = item['content']
+        
+        # Extrair Órgão
+        match_org = re.search(r"(?:1\.|órgão).*?[:\-\?]\s*(.*?)(?:\n|2\.|Qual|$)", content_txt, re.IGNORECASE)
+        orgao = match_org.group(1).replace("*", "").strip() if match_org else "Órgão Indefinido"
+        
+        # Extrair Objeto (Limita a 80 caracteres para não quebrar layout)
+        match_obj = re.search(r"(?:2\.|objeto).*?[:\-\?]\s*(.*?)(?:\n|3\.|Qual|$)", content_txt, re.IGNORECASE | re.DOTALL)
+        objeto = "Objeto Indefinido"
+        if match_obj:
+            raw_obj = match_obj.group(1).replace("*", "").replace("\n", " ").strip()
+            objeto = (raw_obj[:75] + '...') if len(raw_obj) > 75 else raw_obj
+
+        # Extrair Data Sessão
+        match_sessao = re.search(r"DATA_CHAVE:\s*(\d{2}/\d{2}/\d{4})", content_txt)
+        dt_sessao = match_sessao.group(1) if match_sessao else "Data Pendente"
+
+        # TÍTULO FORMATADO: {Data da Consulta}| Edital | {Órgão} | {Objeto} | {Data da Sessão}
+        full_display_title = f"{dt_consulta} | Edital | {orgao} | {objeto} | {dt_sessao}"
+        
+        # Aplicação de Cores baseada no Status
         status = item.get('status')
+        if status == 'red': full_display_title = f":red[{full_display_title}]"
+        elif status == 'yellow': full_display_title = f":orange[{full_display_title}]"
+        elif status == 'green': full_display_title = f"**:green[{full_display_title}]**"
         
-        display_title = raw_title
-        if status == 'red': display_title = f":red[{raw_title}]"
-        elif status == 'yellow': display_title = f":orange[{raw_title}]"
-        elif status == 'green': display_title = f"**:green[{raw_title}]**"
-        
-        with st.expander(f"📅 {dt} | {display_title}"):
+        with st.expander(full_display_title):
             render_status_controls(item['id'], status, item.get('note', ''))
+            
+            # --- NOVO RECURSO: CRUZAMENTO DE DADOS NO HISTÓRICO ---
+            st.info("🧠 Inteligência Artificial")
+            col_ia_btn, col_ia_info = st.columns([0.4, 0.6])
+            
+            with col_ia_btn:
+                # Verifica se já foi feita viabilidade (busca string chave no conteúdo)
+                has_viability = "🛡️ VIABILIDADE" in content_txt
+                btn_label = "🔄 Refazer Cruzamento (Viabilidade)" if has_viability else "🚀 Cruzar Dados (Edital x Empresa)"
+                
+                if st.button(btn_label, key=f"via_{item['id']}"):
+                    if user['plan'] == 'free':
+                        st.warning("Recurso exclusivo para assinantes.")
+                    else:
+                        with st.spinner("Baixando documentos e analisando compatibilidade..."):
+                            # 1. Baixar Docs da Empresa
+                            c_files = db.get_all_company_files_as_bytes(user['username'])
+                            if not c_files:
+                                st.error("Você não tem documentos na pasta da empresa.")
+                            else:
+                                try:
+                                    # 2. Preparar Upload para Gemini
+                                    temps = []
+                                    gemini_files = []
+                                    for n, d in c_files:
+                                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as t:
+                                            t.write(d); tp = t.name
+                                        temps.append(tp)
+                                        gemini_files.append(genai.upload_file(tp, display_name=n))
+                                    
+                                    # 3. Gerar Análise
+                                    prompt_hist = f"""
+                                    ATUE COMO AUDITOR. 
+                                    Compare os documentos anexados da empresa com o seguinte resumo de edital:
+                                    
+                                    --- INÍCIO RESUMO EDITAL ---
+                                    {content_txt}
+                                    --- FIM RESUMO EDITAL ---
+                                    
+                                    Gere um Checklist de Viabilidade: Item do Edital pede X -> Empresa tem Y -> Veredito (Apto/Inapto/Atenção).
+                                    """
+                                    model = genai.GenerativeModel('gemini-pro-latest')
+                                    resp = model.generate_content(gemini_files + [prompt_hist])
+                                    
+                                    # 4. Atualizar no Banco de Dados (Append)
+                                    new_content = content_txt + "\n\n---\n\n# 🛡️ VIABILIDADE (Gerada via Histórico)\n" + resp.text
+                                    
+                                    # Atualiza no Firestore diretamente para persistir
+                                    db.db.collection('users').document(user['username']).collection('history').document(item['id']).update({
+                                        'content': new_content
+                                    })
+                                    
+                                    # Limpeza
+                                    for tp in temps: os.remove(tp)
+                                    
+                                    st.success("Análise de viabilidade adicionada ao registro!")
+                                    time.sleep(1.5)
+                                    st.rerun()
+                                    
+                                except Exception as e:
+                                    st.error(f"Erro na análise IA: {e}")
+
             st.divider()
             
+            # Exibição do Conteúdo
             st.markdown(item['content'])
             
             c1, c2 = st.columns([0.8, 0.2])
@@ -947,17 +1011,18 @@ elif menu == "📜 Histórico":
             st.subheader("💬 Dúvidas (Histórico)")
             for r, t in st.session_state[chat_key]:
                 with st.chat_message(r): st.markdown(t)
-            if q := st.chat_input("Pergunta...", key=f"in_{item['id']}"):
+            if q := st.chat_input("Pergunta sobre este edital...", key=f"in_{item['id']}"):
                 st.session_state[chat_key].append(("user", q))
                 with st.chat_message("user"): st.markdown(q)
                 with st.chat_message("assistant"):
                     with st.spinner("..."):
                         try:
                             m = genai.GenerativeModel('gemini-pro-latest')
-                            res = m.generate_content(f"Contexto: {item['content']}\nPergunta: {q}")
+                            # Contexto é o texto do edital salvo
+                            res = m.generate_content(f"Contexto do Edital: {item['content']}\nPergunta do Usuário: {q}")
                             st.markdown(res.text)
                             st.session_state[chat_key].append(("assistant", res.text))
-                        except: st.error("Erro.")
+                        except: st.error("Erro na resposta IA.")
 
 # 5. CALENDÁRIO
 elif menu == "📅 Calendário":
