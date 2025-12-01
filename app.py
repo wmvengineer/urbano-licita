@@ -62,7 +62,7 @@ except:
 DOC_STRUCTURE = {
     "1. Habilitacao Juridica": ["Contrato Social", "CNPJ", "Documentos Sócios"],
     "2. Habilitacao Fiscal": ["Federal", "Estadual", "Municipal", "FGTS", "Trabalhista"],
-    "3. Qualificacao Tecnica": ["Atestados Operacionais", "Atestados Profissionais", "CAT"],
+    "3. Qualificacao Tecnica": ["Atestados Operacionais", "Atestados Profissionais", "Certidao de Registro no Conselho - Profissionais", "Certidao de Registro no Conselho - Empresa"],
     "4. Habilitacao Financeira": ["Balanco Patrimonial", "Indices Financeiros", "Certidao Falencia"]
 }
 
