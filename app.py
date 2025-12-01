@@ -911,7 +911,7 @@ elif menu == "Análise de Editais":
                 if pdf: st.download_button("⬇️ Download PDF", data=pdf, file_name=f"Analise_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
                 else: st.error("Erro PDF.")
 
-# # 4. HISTÓRICO
+# 4. HISTÓRICO
 elif menu == "📜 Histórico":
     st.title("Biblioteca de Análises")
     lst = db.get_user_history_list(user['username'])
@@ -955,7 +955,7 @@ elif menu == "📜 Histórico":
         
         st.divider()
 
-    # --- LISTAGEM COM NOVO PADRÃO: {Data Cons}| Edital | {Órgão} | {Serviço} | {Data Sess} ---
+    # --- LISTAGEM COM NOVO PADRÃO: {Data Cons}| Edital | {Órgão} | {Objeto} | {Data Sess} ---
     for item in lst:
         chat_key = f"hist_chat_{item['id']}"
         if chat_key not in st.session_state: st.session_state[chat_key] = []
@@ -968,20 +968,23 @@ elif menu == "📜 Histórico":
         match_org = re.search(r"(?:1\.|órgão).*?[:\-\?]\s*(.*?)(?:\n|2\.|Qual|$)", content_txt, re.IGNORECASE)
         orgao = match_org.group(1).replace("*", "").strip() if match_org else "Órgão Indefinido"
         
-        # Extrair Serviço Licitado (Objeto)
-        match_serv = re.search(r"(?:2\.|objeto).*?[:\-\?]\s*(.*?)(?:\n|3\.|Qual|$)", content_txt, re.IGNORECASE | re.DOTALL)
-        servico = "Serviço Indefinido"
-        if match_serv:
-            raw_s = match_serv.group(1).replace("*", "").replace("\n", " ").strip()
-            # Limita tamanho para não quebrar layout, mas mantém a info do serviço
-            servico = (raw_s[:75] + '...') if len(raw_s) > 75 else raw_s
+        # Extrair Objeto do Edital (Corrigido para limpar '(Resumo completo)')
+        match_obj = re.search(r"(?:2\.|objeto).*?[:\-\?]\s*(.*?)(?:\n|3\.|valor|Qual|$)", content_txt, re.IGNORECASE | re.DOTALL)
+        objeto_edital = "Objeto Indefinido"
+        
+        if match_obj:
+            raw_o = match_obj.group(1)
+            # Limpeza agressiva para remover o texto da pergunta que a IA às vezes repete
+            raw_o = raw_o.replace("*", "").replace("\n", " ").replace("(Resumo completo)", "").replace("Qual o objeto do edital?", "").strip()
+            # Limita tamanho para visualização
+            objeto_edital = (raw_o[:75] + '...') if len(raw_o) > 75 else raw_o
 
         # Extrair Data Sessão
         match_sessao = re.search(r"DATA_CHAVE:\s*(\d{2}/\d{2}/\d{4})", content_txt)
         dt_sessao = match_sessao.group(1) if match_sessao else "Data Pendente"
 
-        # TÍTULO FORMATADO
-        full_display_title = f"{dt_consulta} | Edital | {orgao} | {servico} | {dt_sessao}"
+        # TÍTULO FORMATADO: {Data da Consulta}| Edital | {Órgão Licitante} | {Objeto do edital} | {Data da Sessão}
+        full_display_title = f"{dt_consulta} | Edital | {orgao} | {objeto_edital} | {dt_sessao}"
         
         # Aplicação de Cores baseada no Status
         status = item.get('status')
@@ -1020,7 +1023,7 @@ elif menu == "📜 Histórico":
                                         temps.append(tp)
                                         gemini_files.append(genai.upload_file(tp, display_name=n))
                                     
-                                    # 3. Prompt com Separação Técnica (Operacional vs Profissional)
+                                    # Prompt com Separação Técnica (Operacional vs Profissional)
                                     prompt_hist = f"""
                                     ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA. 
                                     Compare os documentos anexados da empresa com o seguinte resumo de edital:
@@ -1036,11 +1039,11 @@ elif menu == "📜 Histórico":
                                     TAREFA: Gere um Checklist de Viabilidade separado nas seguintes categorias OBRIGATÓRIAS:
                                     
                                     A) QUALIFICAÇÃO TÉCNICA OPERACIONAL (EMPRESA)
-                                    - Verifique se a EMPRESA (PJ) possui os atestados ou certidões (CATs) exigidos.
+                                    - Verifique se a EMPRESA (PJ) possui os atestados exigidos.
                                     - Item do Edital -> Documento da Empresa -> Veredito.
                                     
                                     B) QUALIFICAÇÃO TÉCNICA PROFISSIONAL (EQUIPE)
-                                    - Verifique se o PROFISSIONAL (PF) possui as certidões (CATs)/Atestados exigidos.
+                                    - Verifique se o PROFISSIONAL (PF) possui as CATs/Atestados exigidos.
                                     - Item do Edital -> Documento do Profissional -> Veredito.
                                     
                                     C) DEMAIS HABILITAÇÕES (Jurídica, Fiscal, Financeira)
