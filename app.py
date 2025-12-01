@@ -34,20 +34,18 @@ except:
 
 db.init_db()
 
-# --- CSS PARA REMOVER TUDO (RODAPÉ, TOOLBAR, BADGE, FULLSCREEN) ---
+# --- CSS "NUCLEAR V3" - REMOÇÃO TOTAL DE RODAPÉ E EMBED BAR ---
 st.markdown("""
     <style>
-        /* 1. Oculta o rodapé padrão */
+        /* 1. Oculta o rodapé padrão do Streamlit */
         footer {
-            visibility: hidden !important;
-            height: 0px !important;
-            position: fixed !important;
-        }
-
-        /* 2. Oculta a Toolbar superior (onde fica o botão Fullscreen e Menu) */
-        [data-testid="stToolbar"] {
             display: none !important;
             visibility: hidden !important;
+        }
+
+        /* 2. Oculta a barra de ferramentas superior (onde fica o menu) */
+        [data-testid="stToolbar"] {
+            display: none !important;
         }
 
         /* 3. Oculta a decoração colorida no topo */
@@ -58,27 +56,39 @@ st.markdown("""
         /* 4. Oculta o cabeçalho padrão */
         header {
             display: none !important;
-            visibility: hidden !important;
         }
 
-        /* 5. ATAQUE ESPECÍFICO AO "Hosted with Streamlit" no modo Embed */
-        /* Procura por classes que comecem com 'viewerBadge' */
-        div[class^="viewerBadge"] {
+        /* --- AQUI ESTÁ A SOLUÇÃO PARA A SUA IMAGEM --- */
+
+        /* 5. Oculta o botão "Fullscreen" (Tela Cheia) pelo título */
+        button[title="View fullscreen"] {
             display: none !important;
-            visibility: hidden !important;
         }
 
-        /* 6. Segurança extra: Oculta qualquer link para streamlit.io */
+        /* 6. Oculta qualquer DIV que pareça ser a barra de rodapé do Embed 
+           (Geralmente tem a classe viewerBadge...) */
+        div[class*="viewerBadge"] {
+            display: none !important;
+        }
+
+        /* 7. Oculta qualquer link que leve para streamlit.io (o texto "Built with...") */
         a[href*="streamlit.io"] {
             display: none !important;
+            pointer-events: none; /* Previne clique mesmo se visível */
         }
-        
-        /* 7. Remove espaço em branco extra no rodapé */
+
+        /* 8. Força o fundo da página a não ter margem extra */
         .main .block-container {
             padding-bottom: 0px !important;
         }
+        
+        /* 9. Em alguns casos, o rodapé é um elemento 'bottom' fixo */
+        .stApp > footer {
+            display: none !important;
+        }
     </style>
 """, unsafe_allow_html=True)
+
 
 # --- AUTOMAÇÃO DE E-MAILS (Disparo Diário) ---
 try:
