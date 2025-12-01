@@ -808,21 +808,65 @@ elif menu == "Análise de Editais":
         if user['plan'] == 'free': st.info("🔒 Upgrade necessário.")
         else:
             if st.button("Verificar Minha Viabilidade"):
-                with st.spinner("Comparando documentos..."):
+                with st.spinner("Enviando documentos da empresa para a IA (Leitura Nativa/Visual)..."):
+                    # 1. Baixar arquivos da Empresa do Storage para memória
                     c_files = db.get_all_company_files_as_bytes(user['username'])
-                    if not c_files: st.warning("Sem docs da empresa.")
+                    
+                    if not c_files: 
+                        st.warning("Sem documentos na pasta da empresa.")
                     else:
-                        temps = []
-                        for n, d in c_files:
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as t:
-                                t.write(d); tp = t.name
-                            temps.append(genai.upload_file(tp, display_name=n)); os.remove(tp)
+                        local_paths = []
+                        company_ai_files = []
                         
-                        prompt = "Checklist de Viabilidade: Edital vs Empresa. Para cada item: Edital pede X -> Empresa tem Y -> Veredito."
-                        model = genai.GenerativeModel('gemini-pro-latest')
-                        resp = model.generate_content(st.session_state.gemini_files_handles + temps + [prompt])
-                        st.session_state.analise_atual += "\n\n---\n\n# 🛡️ VIABILIDADE\n" + resp.text
-                        st.rerun()
+                        try:
+                            # 2. Upload dos arquivos da Empresa para o Gemini
+                            # Isso permite que a IA leia pixels/imagens (OCR Nativo)
+                            for n, d in c_files:
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as t:
+                                    t.write(d)
+                                    local_paths.append(t.name)
+                                
+                                # Upload explícito para a IA
+                                ai_file = genai.upload_file(t.name, display_name=n)
+                                company_ai_files.append(ai_file)
+                            
+                            # 3. Preparar Prompt + Arquivos do Edital + Arquivos da Empresa
+                            # st.session_state.gemini_files_handles contém o Edital
+                            all_files = st.session_state.gemini_files_handles + company_ai_files
+                            
+                            prompt_cross = """
+                            ATUE COMO AUDITOR SÊNIOR E ESPECIALISTA EM ANÁLISE DOCUMENTAL.
+                            
+                            CONTEXTO:
+                            Você possui acesso aos arquivos do EDITAL (primeiros arquivos) e aos arquivos da EMPRESA (últimos arquivos carregados).
+                            Muitos documentos da empresa podem ser digitalizados/escaneados (imagens). Utilize sua capacidade de visão computacional para ler o conteúdo visualmente.
+                            
+                            TAREFA:
+                            Realize um cruzamento rigoroso ("De/Para") entre as exigências do Edital e os documentos apresentados.
+                            
+                            ESTRUTURA DA RESPOSTA:
+                            Para cada exigência de Habilitação (Jurídica, Fiscal, Técnica, Financeira):
+                            1. **Exigência**: [Cite o item do edital]
+                            2. **Documento da Empresa**: [Qual arquivo enviado atende? Se for imagem, descreva o que leu]
+                            3. **Análise**: O documento é válido? A data está vigente? O atestado comprova a técnica exigida?
+                            4. **Status**: ✅ APTO, ⚠️ ATENÇÃO (ex: vencendo) ou ❌ INAPTO (não encontrado/invalido)
+                            
+                            Ao final, dê um parecer geral sobre a viabilidade.
+                            """
+                            
+                            model = genai.GenerativeModel('gemini-pro-latest')
+                            resp = model.generate_content(all_files + [prompt_cross])
+                            
+                            # 4. Exibir resultado
+                            st.session_state.analise_atual += "\n\n---\n\n# 🛡️ VIABILIDADE (Análise IA Visual)\n" + resp.text
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Erro no processamento IA: {e}")
+                        finally:
+                            # Limpeza dos arquivos temporários locais
+                            for p in local_paths:
+                                if os.path.exists(p): os.remove(p)
         
         st.divider()
         st.subheader("💬 Chat")
@@ -946,7 +990,7 @@ elif menu == "📜 Histórico":
                     if user['plan'] == 'free':
                         st.warning("Recurso exclusivo para assinantes.")
                     else:
-                        with st.spinner("Baixando documentos e analisando compatibilidade..."):
+                        with st.spinner("Por favor, aguarde. Enviando documentos e analisando compatibilidade... Isso pode durar alguns minutos."):
                             # 1. Baixar Docs da Empresa
                             c_files = db.get_all_company_files_as_bytes(user['username'])
                             if not c_files:
