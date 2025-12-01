@@ -159,18 +159,26 @@ def render_status_controls(item_id, current_status, current_note):
             st.toast("Observação salva com sucesso!")
 
 # --- SESSÃO & COOKIES ---
-cookie_manager = stx.CookieManager(key="urbano_cookies")
+# O uso de cache_resource impede que o componente reinicie a cada refresh,
+# garantindo que os cookies sejam lidos corretamente.
+@st.cache_resource(experimental_allow_widgets=True)
+def get_manager():
+    return stx.CookieManager(key="urbano_cookies")
 
-# Garante a inicialização da variável de sessão
+cookie_manager = get_manager()
+
+# Pequena pausa técnica para garantir que o navegador enviou os dados
+time.sleep(0.1)
+
+# Tenta ler todos os cookies de uma vez (mais robusto que get individual)
+cookies = cookie_manager.get_all()
+
 if 'user' not in st.session_state: 
     st.session_state.user = None
 
-# Se o usuário não estiver na memória (refresh), tenta recuperar do cookie
+# Se o usuário não está na memória, tenta recuperar do cookie recém-lido
 if not st.session_state.user:
-    # Aumentado para 0.4s para garantir que o navegador envie o cookie antes da verificação
-    time.sleep(0.4)
-    
-    auth_cookie = cookie_manager.get("urbano_auth")
+    auth_cookie = cookies.get("urbano_auth") if cookies else None
     
     if auth_cookie:
         try:
@@ -187,7 +195,7 @@ if not st.session_state.user:
                         "token": raw.get('token')
                     }
                     st.rerun()
-        except:
+        except: 
             pass
 
 def logout():
