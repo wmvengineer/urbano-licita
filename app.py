@@ -655,11 +655,17 @@ elif menu == "📂 Documentos da Empresa":
             with cols[i%3]:
                 files = db.list_files_from_storage(user['username'], sec, t)
                 with st.expander(f"{t} ({len(files)})"):
-                    for file in files:
+                    # ALTERAÇÃO AQUI: Adicionamos 'idx' (índice) no loop
+                    for idx, file in enumerate(files):
                         c_tx, c_del = st.columns([0.8, 0.2])
                         c_tx.caption(file[:20]+"...")
-                        if c_del.button("🗑️", key=f"d_{file}"):
-                            db.delete_file_from_storage(file, user['username'], sec, t); st.rerun()
+                        
+                        # ALTERAÇÃO AQUI: A key agora é única combinando: seção + tipo + indice + nome
+                        unique_key = f"del_{sec}_{t}_{idx}_{file}"
+                        
+                        if c_del.button("🗑️", key=unique_key):
+                            db.delete_file_from_storage(file, user['username'], sec, t)
+                            st.rerun()
 
 # 3. ANÁLISE
 elif menu == "Análise de Editais":
