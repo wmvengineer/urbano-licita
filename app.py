@@ -971,7 +971,7 @@ elif menu == "📜 Histórico":
                 part_org = content_txt.split("1.")[1].split("2.")[0]
                 # Limpa supostos cabeçalhos da pergunta
                 part_org = part_org.replace("Qual o nome do órgão contratante?", "").replace("Nome do órgão", "").strip()
-                orgao = part_org.replace("*", "").replace("#", "").strip()[:50]
+                orgao = part_org.replace("*", "").replace("#", "").strip()[:60]
         except:
             pass # Mantém Indefinido se falhar
         
