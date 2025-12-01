@@ -1000,9 +1000,9 @@ elif menu == "📜 Histórico":
                 # Remove pontuação inicial (ex: ": A contratação...") e espaços
                 clean_chunk = clean_chunk.strip().lstrip(":- ").strip()
                 
-                # Pega os primeiros 80 caracteres para o título
+                # Pega os primeiros 150 caracteres para o título
                 if len(clean_chunk) > 3:
-                    objeto_edital = (clean_chunk[:80] + '...') if len(clean_chunk) > 80 else clean_chunk
+                    objeto_edital = (clean_chunk[:150] + '...') if len(clean_chunk) > 150 else clean_chunk
         except:
             # Fallback se a numeração falhar
             match_obj = re.search(r"objeto.*?[:\-\?]\s*(.*?)(?:\n|$)", content_txt, re.IGNORECASE)
