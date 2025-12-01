@@ -622,21 +622,29 @@ elif menu == "📂 Documentos da Empresa":
     st.title("📂 Acervo Digital")
     st.info("Estes documentos serão usados para o Cruzamento Automático.")
     
-    # --- TRECHO MODIFICADO INÍCIO ---
     with st.expander("⬆️ Upload", expanded=False):
         c1, c2 = st.columns(2)
         s = c1.selectbox("Pasta", list(DOC_STRUCTURE.keys()))
         t = c2.selectbox("Tipo", DOC_STRUCTURE[s])
         
-        # Alteração: accept_multiple_files=True para permitir seleção múltipla
-        files = st.file_uploader("Arquivos PDF", type=["pdf"], accept_multiple_files=True)
+        # --- LÓGICA DE LIMPEZA DO UPLOADER ---
+        # Inicializa um contador na sessão para controlar o reset do uploader
+        if "uploader_key" not in st.session_state:
+            st.session_state["uploader_key"] = 0
+            
+        # O parâmetro 'key' dinâmico força o componente a resetar quando o número muda
+        files = st.file_uploader(
+            "Arquivos PDF", 
+            type=["pdf"], 
+            accept_multiple_files=True, 
+            key=f"uploader_{st.session_state['uploader_key']}"
+        )
         
         if files and st.button("Salvar na Nuvem"):
             with st.spinner(f"Enviando {len(files)} arquivos..."):
                 count_success = 0
                 for f in files:
                     safe = re.sub(r'[\\/*?:"<>|]', "", f.name)
-                    # Loop enviando um por um usando a função existente do db
                     if db.upload_file_to_storage(f.getvalue(), safe, user['username'], s, t):
                         count_success += 1
                     else:
@@ -644,9 +652,11 @@ elif menu == "📂 Documentos da Empresa":
                 
                 if count_success > 0:
                     st.success(f"{count_success} arquivo(s) salvo(s) com sucesso!")
+                    # INCREMENTA A CHAVE PARA LIMPAR O CAMPO NO PRÓXIMO RERUN
+                    st.session_state["uploader_key"] += 1
                     time.sleep(1)
                     st.rerun()
-    
+
     st.divider()
     for sec, types in DOC_STRUCTURE.items():
         st.markdown(f"**{sec}**")
