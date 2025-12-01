@@ -159,24 +159,36 @@ def render_status_controls(item_id, current_status, current_note):
             st.toast("Observação salva com sucesso!")
 
 # --- SESSÃO & COOKIES ---
+import time
+from datetime import datetime, timedelta
+
+# Inicializa o gerenciador com uma chave fixa para não recriar o componente
 cookie_manager = stx.CookieManager(key="urbano_cookies")
 
-# Obtém todos os cookies de uma vez. 
-# Nota: Na primeira fração de segundo após o F5, isso pode vir vazio, 
-# mas o componente força um 'rerun' automático assim que conecta, corrigindo o estado.
-all_cookies = cookie_manager.get_all()
-
-if 'user' not in st.session_state: 
+# Garante a estrutura do usuário na sessão
+if 'user' not in st.session_state:
     st.session_state.user = None
 
-# Se não estiver logado na memória RAM, tenta recuperar pelo Cookie
+# Lógica de Recuperação de Sessão (Executa apenas se não estiver logado)
 if st.session_state.user is None:
-    if all_cookies and "urbano_auth" in all_cookies:
+    # Tenta ler os cookies imediatamente
+    cookies = cookie_manager.get_all()
+    
+    # Se a lista de cookies vier vazia (comum no 1º carregamento após F5),
+    # aguardamos um momento para o componente sincronizar com o navegador.
+    if not cookies:
+        time.sleep(0.5)
+        cookies = cookie_manager.get_all()
+    
+    # Verifica se o cookie de autenticação existe
+    auth_cookie = cookies.get("urbano_auth") if cookies else None
+    
+    if auth_cookie:
         try:
-            auth_cookie = all_cookies.get("urbano_auth")
+            # Formato esperado: "username|token"
             u, t = auth_cookie.split('|')
             
-            # Valida no banco
+            # Valida contra o banco de dados
             if db.check_session_valid(u, t):
                 raw = db.get_user_by_username(u)
                 if raw:
@@ -189,8 +201,9 @@ if st.session_state.user is None:
                         "token": raw.get('token')
                     }
                     st.rerun() # Atualiza a tela imediatamente para a área logada
-        except:
-            # Se o cookie estiver inválido/corrompido, não faz nada (cai no login)
+        except Exception as e:
+            # Se o cookie estiver corrompido ou inválido, ignora silenciosamente
+            # e deixa o fluxo seguir para a tela de login
             pass
 
 def logout():
