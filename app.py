@@ -34,57 +34,47 @@ except:
 
 db.init_db()
 
-# --- CSS "NUCLEAR V3" - REMOÇÃO TOTAL DE RODAPÉ E EMBED BAR ---
+# --- CSS DEFINITIVO COM MÁSCARA DE RODAPÉ ---
 st.markdown("""
     <style>
-        /* 1. Oculta o rodapé padrão do Streamlit */
-        footer {
+        /* 1. Tenta ocultar pelos métodos tradicionais primeiro */
+        footer, header {
             display: none !important;
             visibility: hidden !important;
         }
-
-        /* 2. Oculta a barra de ferramentas superior (onde fica o menu) */
+        
+        /* 2. Oculta a Toolbar (três pontinhos) */
         [data-testid="stToolbar"] {
             display: none !important;
         }
-
-        /* 3. Oculta a decoração colorida no topo */
-        [data-testid="stDecoration"] {
-            display: none !important;
-        }
-
-        /* 4. Oculta o cabeçalho padrão */
-        header {
-            display: none !important;
-        }
-
-        /* --- AQUI ESTÁ A SOLUÇÃO PARA A SUA IMAGEM --- */
-
-        /* 5. Oculta o botão "Fullscreen" (Tela Cheia) pelo título */
-        button[title="View fullscreen"] {
-            display: none !important;
-        }
-
-        /* 6. Oculta qualquer DIV que pareça ser a barra de rodapé do Embed 
-           (Geralmente tem a classe viewerBadge...) */
-        div[class*="viewerBadge"] {
-            display: none !important;
-        }
-
-        /* 7. Oculta qualquer link que leve para streamlit.io (o texto "Built with...") */
+        
+        /* 3. Oculta links do Streamlit especificamente */
         a[href*="streamlit.io"] {
             display: none !important;
-            pointer-events: none; /* Previne clique mesmo se visível */
         }
 
-        /* 8. Força o fundo da página a não ter margem extra */
-        .main .block-container {
-            padding-bottom: 0px !important;
+        /* 4. TÁTICA DA MÁSCARA (A SOLUÇÃO FINAL) */
+        /* Cria uma barra branca fixa no rodapé que cobre tudo */
+        div[data-testid="stAppViewContainer"]::after {
+            content: "";
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 40px; /* Altura suficiente para cobrir o rodapé */
+            background-color: #ffffff; /* Cor de fundo do seu app (geralmente branco) */
+            z-index: 999999; /* Garante que fique por cima de tudo */
+            pointer-events: all; /* Bloqueia cliques no que estiver embaixo */
         }
         
-        /* 9. Em alguns casos, o rodapé é um elemento 'bottom' fixo */
-        .stApp > footer {
-            display: none !important;
+        /* Se o fundo do seu app não for branco puro, ajuste a cor acima */
+        /* Exemplo: background-color: #F0F2F6; (cinza claro padrão do Streamlit) */
+        
+        /* Ajuste para telas pequenas (mobile) */
+        @media (max-width: 640px) {
+            div[data-testid="stAppViewContainer"]::after {
+                height: 50px;
+            }
         }
     </style>
 """, unsafe_allow_html=True)
