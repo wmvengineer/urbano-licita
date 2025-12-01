@@ -621,17 +621,31 @@ if menu == "Admin":
 elif menu == "📂 Documentos da Empresa":
     st.title("📂 Acervo Digital")
     st.info("Estes documentos serão usados para o Cruzamento Automático.")
+    
+    # --- TRECHO MODIFICADO INÍCIO ---
     with st.expander("⬆️ Upload", expanded=False):
         c1, c2 = st.columns(2)
         s = c1.selectbox("Pasta", list(DOC_STRUCTURE.keys()))
         t = c2.selectbox("Tipo", DOC_STRUCTURE[s])
-        f = st.file_uploader("Arquivo PDF", type=["pdf"])
-        if f and st.button("Salvar na Nuvem"):
-            with st.spinner("Enviando..."):
-                safe = re.sub(r'[\\/*?:"<>|]', "", f.name)
-                if db.upload_file_to_storage(f.getvalue(), safe, user['username'], s, t):
-                    st.success("Salvo!"); time.sleep(1); st.rerun()
-                else: st.error("Erro upload.")
+        
+        # Alteração: accept_multiple_files=True para permitir seleção múltipla
+        files = st.file_uploader("Arquivos PDF", type=["pdf"], accept_multiple_files=True)
+        
+        if files and st.button("Salvar na Nuvem"):
+            with st.spinner(f"Enviando {len(files)} arquivos..."):
+                count_success = 0
+                for f in files:
+                    safe = re.sub(r'[\\/*?:"<>|]', "", f.name)
+                    # Loop enviando um por um usando a função existente do db
+                    if db.upload_file_to_storage(f.getvalue(), safe, user['username'], s, t):
+                        count_success += 1
+                    else:
+                        st.error(f"Erro ao enviar: {f.name}")
+                
+                if count_success > 0:
+                    st.success(f"{count_success} arquivo(s) salvo(s) com sucesso!")
+                    time.sleep(1)
+                    st.rerun()
     
     st.divider()
     for sec, types in DOC_STRUCTURE.items():
