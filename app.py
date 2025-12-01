@@ -34,44 +34,46 @@ except:
 
 db.init_db()
 
-# --- CSS "NUCLEAR" PARA OCULTAR TUDO (RODAPÉ, MENU, FULLSCREEN, LINKS) ---
+# --- CSS PARA REMOVER TUDO (RODAPÉ, TOOLBAR, BADGE, FULLSCREEN) ---
 st.markdown("""
     <style>
         /* 1. Oculta o rodapé padrão */
         footer {
+            visibility: hidden !important;
+            height: 0px !important;
+            position: fixed !important;
+        }
+
+        /* 2. Oculta a Toolbar superior (onde fica o botão Fullscreen e Menu) */
+        [data-testid="stToolbar"] {
             display: none !important;
             visibility: hidden !important;
         }
 
-        /* 2. Oculta a barra superior (header) e decoração */
-        header, [data-testid="stDecoration"] {
+        /* 3. Oculta a decoração colorida no topo */
+        [data-testid="stDecoration"] {
+            display: none !important;
+        }
+
+        /* 4. Oculta o cabeçalho padrão */
+        header {
             display: none !important;
             visibility: hidden !important;
         }
 
-        /* 3. Oculta o menu de três pontinhos */
-        #MainMenu {
+        /* 5. ATAQUE ESPECÍFICO AO "Hosted with Streamlit" no modo Embed */
+        /* Procura por classes que comecem com 'viewerBadge' */
+        div[class^="viewerBadge"] {
             display: none !important;
             visibility: hidden !important;
         }
 
-        /* 4. Oculta especificamente o link "Built with Streamlit" 
-           (Procura por qualquer link que leve para streamlit.io) */
+        /* 6. Segurança extra: Oculta qualquer link para streamlit.io */
         a[href*="streamlit.io"] {
             display: none !important;
         }
-
-        /* 5. Oculta o botão "Fullscreen" (Tela Cheia) */
-        button[title="View fullscreen"] {
-            display: none !important;
-        }
         
-        /* 6. Oculta container de status no canto superior direito */
-        [data-testid="stStatusWidget"] {
-            display: none !important;
-        }
-
-        /* 7. Garante que o conteúdo ocupe a tela toda sem rodapé */
+        /* 7. Remove espaço em branco extra no rodapé */
         .main .block-container {
             padding-bottom: 0px !important;
         }
