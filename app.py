@@ -34,31 +34,46 @@ except:
 
 db.init_db()
 
-# --- CSS "NUCLEAR" PARA OCULTAR RODAPÉ E MENU ---
+# --- CSS "NUCLEAR" PARA OCULTAR TUDO (RODAPÉ, MENU, FULLSCREEN, LINKS) ---
 st.markdown("""
     <style>
-        /* Remove o rodapé padrão */
+        /* 1. Oculta o rodapé padrão */
         footer {
             display: none !important;
             visibility: hidden !important;
         }
 
-        /* Remove a barra superior colorida (header) caso apareça */
-        header {
+        /* 2. Oculta a barra superior (header) e decoração */
+        header, [data-testid="stDecoration"] {
             display: none !important;
             visibility: hidden !important;
         }
 
-        /* Remove o menu de opções (três pontinhos) */
+        /* 3. Oculta o menu de três pontinhos */
         #MainMenu {
             display: none !important;
             visibility: hidden !important;
         }
-        
-        /* Remove especificamente a classe que contém o "Built with Streamlit" 
-           (caso o seletor 'footer' não pegue por alguma atualização) */
-        [data-testid="stFooter"] {
+
+        /* 4. Oculta especificamente o link "Built with Streamlit" 
+           (Procura por qualquer link que leve para streamlit.io) */
+        a[href*="streamlit.io"] {
             display: none !important;
+        }
+
+        /* 5. Oculta o botão "Fullscreen" (Tela Cheia) */
+        button[title="View fullscreen"] {
+            display: none !important;
+        }
+        
+        /* 6. Oculta container de status no canto superior direito */
+        [data-testid="stStatusWidget"] {
+            display: none !important;
+        }
+
+        /* 7. Garante que o conteúdo ocupe a tela toda sem rodapé */
+        .main .block-container {
+            padding-bottom: 0px !important;
         }
     </style>
 """, unsafe_allow_html=True)
