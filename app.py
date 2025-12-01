@@ -34,36 +34,17 @@ except:
 
 db.init_db()
 
-# --- CSS "INVENCÍVEL" (CAMADA MÁXIMA) ---
+# --- CSS LIMPO (A Guilhotina resolve o rodapé no HTML) ---
 st.markdown("""
     <style>
-        /* 1. Oculta elementos conhecidos pelos seletores */
-        footer { visibility: hidden !important; }
-        [data-testid="stDecoration"] { display: none !important; }
-        [data-testid="stToolbar"] { display: none !important; }
-        
-        /* 2. Tenta ocultar o container específico do Badge */
-        div[class*="viewerBadge"] { display: none !important; }
-
-        /* 3. MÁSCARA DE RODAPÉ COM Z-INDEX MÁXIMO */
-        /* Cria uma faixa que fica FISICAMENTE acima de qualquer outro elemento */
-        body::after {
-            content: " ";
-            position: fixed;
-            bottom: 0;
-            left: 0;
-            width: 100vw;
-            height: 45px; /* Altura suficiente para cobrir o rodapé */
-            background-color: #ffffff; /* Cor branca para cobrir */
-            z-index: 2147483647 !important; /* Valor MÁXIMO permitido pelo navegador */
-            pointer-events: none; /* Permite ver, mas evita bloquear interações fantasmas */
+        /* Esconde menu superior (3 pontinhos) e cabeçalho */
+        [data-testid="stToolbar"], [data-testid="stDecoration"], header {
+            display: none !important;
         }
         
-        /* 4. Ajuste para telas de celular */
-        @media (max-width: 640px) {
-            body::after {
-                height: 55px; /* Um pouco mais alto no mobile */
-            }
+        /* Remove padding extra no fundo para aproveitar o espaço */
+        .main .block-container {
+            padding-bottom: 0px !important;
         }
     </style>
 """, unsafe_allow_html=True)
