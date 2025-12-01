@@ -554,7 +554,7 @@ if menu == "Admin":
             column_config={
                 "username": st.column_config.TextColumn("Usuário", disabled=True),
                 "credits": st.column_config.NumberColumn("Usados", disabled=True),
-                "plan": st.column_config.SelectboxColumn("Plano", options=['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited'], required=True)
+                "plan": st.column_config.SelectboxColumn("Plano", options=['Teste Grátis', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'Ilimitado'], required=True)
             },
             hide_index=True, use_container_width=True, key="users_editor"
         )
@@ -579,7 +579,7 @@ if menu == "Admin":
             if sel_user:
                 with st.form("edit_cred"):
                     nc = st.number_input("Definir 'Créditos Usados':", min_value=0, value=int(u_info['credits']))
-                    np = st.selectbox("Plano:", ['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited'], index=['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited'].index(u_info['plan']))
+                    np = st.selectbox("Plano:", ['Teste Grátis', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'Ilimitado'], index=['Teste Grátis', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'Ilimitado'].index(u_info['plan']))
                     if st.form_submit_button("✅ Atualizar"):
                         db.admin_set_credits_used(sel_user, nc)
                         db.admin_update_plan(sel_user, np)
@@ -833,7 +833,7 @@ elif menu == "Análise de Editais":
                             # 3. Preparar Prompt + Arquivos do Edital + Arquivos da Empresa
                             all_files = st.session_state.gemini_files_handles + company_ai_files
                             
-                            # ALTERAÇÃO: Instrução específica de flexibilidade técnica adicionada ao prompt
+                            # ALTERAÇÃO: Instruções reforçadas para ler TODOS os arquivos e aplicar flexibilidade técnica
                             prompt_cross = """
                             ATUE COMO AUDITOR SÊNIOR E ESPECIALISTA EM ANÁLISE DOCUMENTAL DE ENGENHARIA.
                             
@@ -841,11 +841,16 @@ elif menu == "Análise de Editais":
                             Você possui acesso aos arquivos do EDITAL (primeiros arquivos) e aos arquivos da EMPRESA (últimos arquivos carregados).
                             Utilize visão computacional para ler documentos digitalizados/imagens.
                             
-                            DIRETRIZ IMPORTANTE - QUALIFICAÇÃO TÉCNICA:
-                            Na análise dos Atestados de Capacidade Técnica (Operacional e Profissional), NÃO se restrinja à busca literal de palavras.
-                            Analise a **SEMELHANÇA TÉCNICA** e a **NATUREZA** dos serviços.
-                            Se o atestado descreve um serviço que, embora com nome diferente, possui a mesma complexidade técnica ou engloba o serviço exigido no edital, considere como VÁLIDO.
-                            (Exemplo: "Pavimentação Asfáltica" no atestado valida "CBUQ" no edital; "Reforma Predial" valida "Manutenção Civil").
+                            DIRETRIZ 1: EXAUSTIVIDADE (LER TUDO)
+                            Você deve analisar **TODOS** os documentos fornecidos pela empresa (Atestados, Certidões, CATs, Balanços, etc.) sem exceção.
+                            Não conclua que um documento falta sem antes verificar cada arquivo enviado.
+                            
+                            DIRETRIZ 2: FLEXIBILIDADE TÉCNICA (SEMÂNTICA)
+                            Na análise da Qualificação Técnica (Atestados e Certidões):
+                            1. NÃO se restrinja à literalidade dos termos escritos.
+                            2. Busque por **SIMILARIDADE TÉCNICA**, **NATUREZA DO SERVIÇO** e **COMPATIBILIDADE**.
+                            3. Se o edital pede um serviço "X" e o atestado/certidão apresenta "Y", mas tecnicamente "Y" é similar ou engloba "X", considere como VÁLIDO.
+                            (Exemplo: "Reforma geral" valida "Pintura"; "Pavimentação" valida "Tapa-buraco").
                             
                             TAREFA:
                             Realize um cruzamento rigoroso ("De/Para") entre as exigências do Edital e os documentos apresentados.
@@ -853,10 +858,10 @@ elif menu == "Análise de Editais":
                             ESTRUTURA DA RESPOSTA:
                             Para cada exigência de Habilitação (Jurídica, Fiscal, Técnica, Financeira):
                             1. **Exigência**: [Cite o item do edital]
-                            2. **Documento da Empresa**: [Qual arquivo enviado atende? Se for imagem, descreva o que leu]
+                            2. **Documento(s) da Empresa**: [Cite qual(is) arquivo(s) analisado(s) atende(m) ao item]
                             3. **Análise Técnica**: 
                                - O documento é válido/vigente? 
-                               - Para Atestados: O serviço executado guarda similaridade técnica com o exigido? (Justifique a correlação se os termos forem diferentes).
+                               - Para Técnica: Explique a similaridade encontrada (Ex: "O serviço A no atestado é equivalente ao exigido B pois...").
                             4. **Status**: ✅ APTO, ⚠️ ATENÇÃO ou ❌ INAPTO
                             
                             Ao final, dê um parecer geral sobre a viabilidade.
@@ -905,7 +910,7 @@ elif menu == "Análise de Editais":
                 if pdf: st.download_button("⬇️ Download PDF", data=pdf, file_name=f"Analise_{datetime.now().strftime('%Y%m%d')}.pdf", mime="application/pdf")
                 else: st.error("Erro PDF.")
 
-# 4. HISTÓRICO
+# # 4. HISTÓRICO
 elif menu == "📜 Histórico":
     st.title("Biblioteca de Análises")
     lst = db.get_user_history_list(user['username'])
@@ -949,32 +954,33 @@ elif menu == "📜 Histórico":
         
         st.divider()
 
-    # --- LISTAGEM COM NOVO PADRÃO DE TÍTULO E CRUZAMENTO ---
+    # --- LISTAGEM COM NOVO PADRÃO: {Data Cons}| Edital | {Órgão} | {Serviço} | {Data Sess} ---
     for item in lst:
         chat_key = f"hist_chat_{item['id']}"
         if chat_key not in st.session_state: st.session_state[chat_key] = []
         
-        # 1. Extração de Dados para o Título Personalizado
+        # 1. Extração de Dados
         dt_consulta = item['created_at'].strftime("%d/%m/%Y")
         content_txt = item['content']
         
-        # Extrair Órgão
+        # Extrair Órgão Licitante
         match_org = re.search(r"(?:1\.|órgão).*?[:\-\?]\s*(.*?)(?:\n|2\.|Qual|$)", content_txt, re.IGNORECASE)
         orgao = match_org.group(1).replace("*", "").strip() if match_org else "Órgão Indefinido"
         
-        # Extrair Objeto (Limita a 80 caracteres para não quebrar layout)
-        match_obj = re.search(r"(?:2\.|objeto).*?[:\-\?]\s*(.*?)(?:\n|3\.|Qual|$)", content_txt, re.IGNORECASE | re.DOTALL)
-        objeto = "Objeto Indefinido"
-        if match_obj:
-            raw_obj = match_obj.group(1).replace("*", "").replace("\n", " ").strip()
-            objeto = (raw_obj[:75] + '...') if len(raw_obj) > 75 else raw_obj
+        # Extrair Serviço Licitado (Objeto)
+        match_serv = re.search(r"(?:2\.|objeto).*?[:\-\?]\s*(.*?)(?:\n|3\.|Qual|$)", content_txt, re.IGNORECASE | re.DOTALL)
+        servico = "Serviço Indefinido"
+        if match_serv:
+            raw_s = match_serv.group(1).replace("*", "").replace("\n", " ").strip()
+            # Limita tamanho para não quebrar layout, mas mantém a info do serviço
+            servico = (raw_s[:75] + '...') if len(raw_s) > 75 else raw_s
 
         # Extrair Data Sessão
         match_sessao = re.search(r"DATA_CHAVE:\s*(\d{2}/\d{2}/\d{4})", content_txt)
         dt_sessao = match_sessao.group(1) if match_sessao else "Data Pendente"
 
-        # TÍTULO FORMATADO: {Data da Consulta}| Edital | {Órgão} | {Objeto} | {Data da Sessão}
-        full_display_title = f"{dt_consulta} | Edital | {orgao} | {objeto} | {dt_sessao}"
+        # TÍTULO FORMATADO
+        full_display_title = f"{dt_consulta} | Edital | {orgao} | {servico} | {dt_sessao}"
         
         # Aplicação de Cores baseada no Status
         status = item.get('status')
@@ -985,12 +991,11 @@ elif menu == "📜 Histórico":
         with st.expander(full_display_title):
             render_status_controls(item['id'], status, item.get('note', ''))
             
-            # --- NOVO RECURSO: CRUZAMENTO DE DADOS NO HISTÓRICO ---
+            # --- CRUZAMENTO DE DADOS NO HISTÓRICO ---
             st.info("🧠 Inteligência Artificial")
             col_ia_btn, col_ia_info = st.columns([0.4, 0.6])
             
             with col_ia_btn:
-                # Verifica se já foi feita viabilidade (busca string chave no conteúdo)
                 has_viability = "🛡️ VIABILIDADE" in content_txt
                 btn_label = "🔄 Refazer Cruzamento (Viabilidade)" if has_viability else "🚀 Cruzar Dados (Edital x Empresa)"
                 
@@ -998,23 +1003,23 @@ elif menu == "📜 Histórico":
                     if user['plan'] == 'free':
                         st.warning("Recurso exclusivo para assinantes.")
                     else:
-                        with st.spinner("Por favor, aguarde. Enviando documentos e analisando compatibilidade... Isso pode durar alguns minutos."):
+                        with st.spinner("Baixando documentos e analisando compatibilidade..."):
                             # 1. Baixar Docs da Empresa
                             c_files = db.get_all_company_files_as_bytes(user['username'])
                             if not c_files:
                                 st.error("Você não tem documentos na pasta da empresa.")
                             else:
                                 try:
-                                    # 2. Preparar Upload para Gemini
                                     temps = []
                                     gemini_files = []
+                                    # Upload para IA (Leitura Nativa/Visual)
                                     for n, d in c_files:
                                         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as t:
                                             t.write(d); tp = t.name
                                         temps.append(tp)
                                         gemini_files.append(genai.upload_file(tp, display_name=n))
                                     
-                                    # 3. Gerar Análise com Flexibilidade Técnica
+                                    # Prompt com Flexibilidade Técnica e Exaustividade
                                     prompt_hist = f"""
                                     ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA. 
                                     Compare os documentos anexados da empresa com o seguinte resumo de edital:
@@ -1023,37 +1028,35 @@ elif menu == "📜 Histórico":
                                     {content_txt}
                                     --- FIM RESUMO EDITAL ---
                                     
-                                    DIRETRIZ DE FLEXIBILIDADE TÉCNICA (ATESTADOS):
-                                    Ao verificar a Qualificação Técnica, identifique serviços **SIMILARES** ou **CORRELATOS**.
-                                    Não exija correspondência exata de termos. Se o serviço descrito nos documentos da empresa for tecnicamente compatível com a exigência do edital (mesmo com nomenclatura distinta), considere como atendimento ao item.
+                                    DIRETRIZ 1: LEITURA COMPLETA
+                                    Analise **TODOS** os arquivos anexados da empresa (Atestados, Certidões/CATs, Jurídico, Fiscal). Não ignore nenhum documento.
+                                    
+                                    DIRETRIZ 2: FLEXIBILIDADE TÉCNICA (ATESTADOS E CERTIDÕES)
+                                    Ao verificar a Qualificação Técnica, identifique serviços **SIMILARES** ou de **NATUREZA EQUIVALENTE**.
+                                    Não exija correspondência exata de nomes. Se o serviço descrito nos atestados/certidões for tecnicamente compatível com a exigência do edital, considere como atendimento ao item.
+                                    Justifique a correlação técnica encontrada.
                                     
                                     Gere um Checklist de Viabilidade Detalhado:
-                                    Item do Edital pede X -> Empresa tem Y (Explique a similaridade técnica encontrada, se houver) -> Veredito (Apto/Inapto/Atenção).
+                                    Item do Edital pede X -> Empresa tem Y (Explique a similaridade técnica e cite o documento) -> Veredito (Apto/Inapto/Atenção).
                                     """
                                     model = genai.GenerativeModel('gemini-pro-latest')
                                     resp = model.generate_content(gemini_files + [prompt_hist])
                                     
-                                    # 4. Atualizar no Banco de Dados (Append)
+                                    # Atualizar no Banco
                                     new_content = content_txt + "\n\n---\n\n# 🛡️ VIABILIDADE (Gerada via Histórico)\n" + resp.text
-                                    
-                                    # Atualiza no Firestore diretamente para persistir
                                     db.db.collection('users').document(user['username']).collection('history').document(item['id']).update({
                                         'content': new_content
                                     })
                                     
-                                    # Limpeza
                                     for tp in temps: os.remove(tp)
-                                    
                                     st.success("Análise de viabilidade adicionada ao registro!")
-                                    time.sleep(1.5)
-                                    st.rerun()
+                                    time.sleep(1.5); st.rerun()
                                     
                                 except Exception as e:
                                     st.error(f"Erro na análise IA: {e}")
 
             st.divider()
             
-            # Exibição do Conteúdo
             st.markdown(item['content'])
             
             c1, c2 = st.columns([0.8, 0.2])
@@ -1075,7 +1078,6 @@ elif menu == "📜 Histórico":
                     with st.spinner("..."):
                         try:
                             m = genai.GenerativeModel('gemini-pro-latest')
-                            # Contexto é o texto do edital salvo
                             res = m.generate_content(f"Contexto do Edital: {item['content']}\nPergunta do Usuário: {q}")
                             st.markdown(res.text)
                             st.session_state[chat_key].append(("assistant", res.text))
