@@ -34,46 +34,35 @@ except:
 
 db.init_db()
 
-# --- CSS DEFINITIVO COM MÁSCARA DE RODAPÉ ---
+# --- CSS "INVENCÍVEL" (CAMADA MÁXIMA) ---
 st.markdown("""
     <style>
-        /* 1. Tenta ocultar pelos métodos tradicionais primeiro */
-        footer, header {
-            display: none !important;
-            visibility: hidden !important;
-        }
+        /* 1. Oculta elementos conhecidos pelos seletores */
+        footer { visibility: hidden !important; }
+        [data-testid="stDecoration"] { display: none !important; }
+        [data-testid="stToolbar"] { display: none !important; }
         
-        /* 2. Oculta a Toolbar (três pontinhos) */
-        [data-testid="stToolbar"] {
-            display: none !important;
-        }
-        
-        /* 3. Oculta links do Streamlit especificamente */
-        a[href*="streamlit.io"] {
-            display: none !important;
-        }
+        /* 2. Tenta ocultar o container específico do Badge */
+        div[class*="viewerBadge"] { display: none !important; }
 
-        /* 4. TÁTICA DA MÁSCARA (A SOLUÇÃO FINAL) */
-        /* Cria uma barra branca fixa no rodapé que cobre tudo */
-        div[data-testid="stAppViewContainer"]::after {
-            content: "";
+        /* 3. MÁSCARA DE RODAPÉ COM Z-INDEX MÁXIMO */
+        /* Cria uma faixa que fica FISICAMENTE acima de qualquer outro elemento */
+        body::after {
+            content: " ";
             position: fixed;
             bottom: 0;
             left: 0;
-            width: 100%;
-            height: 40px; /* Altura suficiente para cobrir o rodapé */
-            background-color: #ffffff; /* Cor de fundo do seu app (geralmente branco) */
-            z-index: 999999; /* Garante que fique por cima de tudo */
-            pointer-events: all; /* Bloqueia cliques no que estiver embaixo */
+            width: 100vw;
+            height: 45px; /* Altura suficiente para cobrir o rodapé */
+            background-color: #ffffff; /* Cor branca para cobrir */
+            z-index: 2147483647 !important; /* Valor MÁXIMO permitido pelo navegador */
+            pointer-events: none; /* Permite ver, mas evita bloquear interações fantasmas */
         }
         
-        /* Se o fundo do seu app não for branco puro, ajuste a cor acima */
-        /* Exemplo: background-color: #F0F2F6; (cinza claro padrão do Streamlit) */
-        
-        /* Ajuste para telas pequenas (mobile) */
+        /* 4. Ajuste para telas de celular */
         @media (max-width: 640px) {
-            div[data-testid="stAppViewContainer"]::after {
-                height: 50px;
+            body::after {
+                height: 55px; /* Um pouco mais alto no mobile */
             }
         }
     </style>
