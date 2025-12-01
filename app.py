@@ -161,21 +161,22 @@ def render_status_controls(item_id, current_status, current_note):
 # --- SESSÃO & COOKIES ---
 cookie_manager = stx.CookieManager(key="urbano_cookies")
 
+# Obtém todos os cookies de uma vez. 
+# Nota: Na primeira fração de segundo após o F5, isso pode vir vazio, 
+# mas o componente força um 'rerun' automático assim que conecta, corrigindo o estado.
+all_cookies = cookie_manager.get_all()
+
 if 'user' not in st.session_state: 
     st.session_state.user = None
 
-# Lógica de Persistência de Login
-if not st.session_state.user:
-    # Pausa técnica (0.2s) para garantir que o componente de cookies carregou no navegador
-    # Isso evita que o sistema "pense" que não tem cookie durante um F5 (refresh)
-    time.sleep(0.2)
-    
-    auth_cookie = cookie_manager.get("urbano_auth")
-    
-    if auth_cookie:
+# Se não estiver logado na memória RAM, tenta recuperar pelo Cookie
+if st.session_state.user is None:
+    if all_cookies and "urbano_auth" in all_cookies:
         try:
+            auth_cookie = all_cookies.get("urbano_auth")
             u, t = auth_cookie.split('|')
-            # Verifica no banco se o token ainda é válido
+            
+            # Valida no banco
             if db.check_session_valid(u, t):
                 raw = db.get_user_by_username(u)
                 if raw:
@@ -187,8 +188,9 @@ if not st.session_state.user:
                         "credits": raw.get('credits_used', 0), 
                         "token": raw.get('token')
                     }
-                    st.rerun()
-        except: 
+                    st.rerun() # Atualiza a tela imediatamente para a área logada
+        except:
+            # Se o cookie estiver inválido/corrompido, não faz nada (cai no login)
             pass
 
 def logout():
