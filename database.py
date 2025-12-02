@@ -69,8 +69,24 @@ def init_db():
 def register_user(username, name, email, password, company_name, cnpj):
     try:
         users_ref = db.collection('users')
+        
+        # 1. Verifica se o Username (ID) já existe
         if users_ref.document(username).get().exists:
             return False, "Nome de usuário já existe."
+        
+        # 2. Verifica se o E-mail já está em uso (Bloqueia duplicidade)
+        # O uso de .limit(1) torna a consulta mais eficiente, parando no primeiro match
+        email_query = users_ref.where('email', '==', email).limit(1).stream()
+        for _ in email_query:
+            return False, "Este e-mail já possui cadastro no sistema."
+
+        # 3. Verifica se o CNPJ já está em uso (Bloqueia duplicidade)
+        if cnpj:
+            # Remove pontuações básicas para evitar burlar com formatações diferentes (opcional, mas recomendado)
+            # Se preferir manter a verificação exata da string digitada, mantenha apenas a query abaixo
+            cnpj_query = users_ref.where('cnpj', '==', cnpj).limit(1).stream()
+            for _ in cnpj_query:
+                return False, "Este CNPJ já está vinculado a uma conta."
         
         hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         users_ref.document(username).set({
