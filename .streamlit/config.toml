@@ -4,8 +4,10 @@ toolbarMode = "viewer"
 
 [browser]
 gatherUsageStats = false
+serverAddress = "0.0.0.0"
 
 [server]
+headless = true
 enableCORS = false
 enableXsrfProtection = false
-enableWebsocketCompression = false
+maxUploadSize = 50
