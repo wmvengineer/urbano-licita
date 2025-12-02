@@ -552,6 +552,9 @@ if menu == "Admin":
     stats = db.admin_get_users_stats()
     df = pd.DataFrame(stats)
     
+    # Lista oficial de planos conforme salvo no Banco de Dados
+    valid_plans = ['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited']
+    
     if not df.empty:
         k1, k2, k3 = st.columns(3)
         k1.metric("Usuários", len(df))
@@ -569,12 +572,14 @@ if menu == "Admin":
             df_display = df
 
         st.subheader("Base de Usuários")
+        
+        # Correção: As opções do SelectboxColumn devem bater com o que existe no banco (free, unlimited, etc)
         edited_df = st.data_editor(
             df_display,
             column_config={
                 "username": st.column_config.TextColumn("Usuário", disabled=True),
                 "credits": st.column_config.NumberColumn("Usados", disabled=True),
-                "plan": st.column_config.SelectboxColumn("Plano", options=['Teste Grátis', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'Ilimitado'], required=True)
+                "plan": st.column_config.SelectboxColumn("Plano", options=valid_plans, required=True)
             },
             hide_index=True, use_container_width=True, key="users_editor"
         )
@@ -597,13 +602,24 @@ if menu == "Admin":
                 st.info(f"Plano: {u_info['plan']} | Usados: {u_info['credits']}")
         with col_act:
             if sel_user:
+                # Correção: Try/Except para garantir que o index exista e o botão apareça
                 with st.form("edit_cred"):
                     nc = st.number_input("Definir 'Créditos Usados':", min_value=0, value=int(u_info['credits']))
-                    np = st.selectbox("Plano:", ['Teste Grátis', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'Ilimitado'], index=['Teste Grátis', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'Ilimitado'].index(u_info['plan']))
+                    
+                    # Tenta achar o índice do plano atual na lista válida
+                    try:
+                        current_index = valid_plans.index(u_info['plan'])
+                    except ValueError:
+                        current_index = 0 # Se não achar (ex: admin antigo), joga para 'free'
+                    
+                    np = st.selectbox("Plano:", valid_plans, index=current_index)
+                    
+                    # O botão está dentro do form, identado corretamente
                     if st.form_submit_button("✅ Atualizar"):
                         db.admin_set_credits_used(sel_user, nc)
                         db.admin_update_plan(sel_user, np)
                         st.toast("Atualizado!"); time.sleep(1); st.rerun()
+                        
                 if st.button("🔄 Resetar Créditos (Zero)"):
                     db.admin_set_credits_used(sel_user, 0)
                     st.toast("Resetado!"); time.sleep(1); st.rerun()
