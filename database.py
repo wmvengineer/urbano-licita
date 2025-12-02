@@ -66,7 +66,7 @@ def init_db():
     except Exception as e:
         print(f"Erro init DB: {e}")
 
-# ATUALIZADO: Adicionados company_name e cnpj
+# --- AQUI ESTAVA O ERRO: A FUNÇÃO AGORA RECEBE 6 ARGUMENTOS ---
 def register_user(username, name, email, password, company_name, cnpj):
     try:
         users_ref = db.collection('users')
@@ -78,8 +78,8 @@ def register_user(username, name, email, password, company_name, cnpj):
             'username': username,
             'name': name,
             'email': email,
-            'company_name': company_name, # Novo Campo
-            'cnpj': cnpj,                 # Novo Campo
+            'company_name': company_name, # Novo Campo Salvo
+            'cnpj': cnpj,                 # Novo Campo Salvo
             'password_hash': hashed,
             'role': 'user',
             'plan_type': 'free',
@@ -91,7 +91,6 @@ def register_user(username, name, email, password, company_name, cnpj):
     except Exception as e:
         return False, str(e)
 
-# ATUALIZADO: Retorna company_name e cnpj no dicionário
 def login_user(username, password):
     try:
         doc = db.collection('users').document(username).get()
