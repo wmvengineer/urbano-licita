@@ -12,6 +12,18 @@ from io import BytesIO
 import random
 import base64 
 
+# --- MAPA DE NOMES DE PLANOS (NOVOS REQUISITOS) ---
+PLAN_MAP = {
+    'unlimited': 'Nível Administrador',
+    'free': 'Teste Gratuito',
+    'plano_15': 'Plano 15 análises',
+    'plano_30': 'Plano 30 análises',
+    'plano_60': 'Plano 60 análises',
+    'plano_90': 'Plano 90 análises',
+    'unlimited_30': 'Ilimitado - 30 DIAS',
+    'expired': 'Expirado'
+}
+
 # --- LIBS PARA PDF E CALENDÁRIO ---
 from xhtml2pdf import pisa
 import markdown
@@ -472,6 +484,19 @@ if fresh:
     limit = db.get_plan_limit(user['plan'])
 else: logout()
 
+# --- LÓGICA DE VENCIMENTO DO PLANO (NOVO) ---
+# Se for unlimited_30, verificamos a data. Se passou, muda para 'expired'
+if user['plan'] == 'unlimited_30':
+    expires = user.get('plan_expires_at')
+    if expires:
+        # Verifica se a data atual já passou da data de expiração
+        # Removemos timezone para comparar com datetime.now() simples
+        if expires.replace(tzinfo=None) < datetime.now():
+            db.admin_update_plan(user['username'], 'expired')
+            st.toast("Seu plano de 30 dias expirou.")
+            time.sleep(2)
+            st.rerun()
+
 # --- CSS PARA A SIDEBAR (Barra Lateral) ---
 st.markdown("""
     <style>
@@ -530,11 +555,24 @@ with st.sidebar:
         st.caption(f"CNPJ: {user['cnpj']}")
         
     st.markdown(f"### Olá, {user['name']}")
-    st.caption(f"Plano: **{user['plan'].upper()}**")
+    # Exibição do Nome do Plano Mapeado
+    plan_display = PLAN_MAP.get(user['plan'], user['plan'])
+    st.caption(f"Plano: **{plan_display}**")
+    
+    # NOVO: Contador de Dias (Apenas para Unlimited 30)
+    if user['plan'] == 'unlimited_30' and user.get('plan_expires_at'):
+        exp = user['plan_expires_at'].replace(tzinfo=None)
+        days_left = (exp - datetime.now()).days
+        if days_left < 0: days_left = 0
+        
+        # Exibe em amarelo chamativo
+        st.markdown(f"<p style='color:#FFDD00; font-weight:bold;'>⏳ Restam: {days_left} dias</p>", unsafe_allow_html=True)
+
+    # Barra de progresso (Mantenha o código original abaixo disso)
     pct = min(user['credits']/limit, 1.0) if limit > 0 else 1.0
     st.progress(pct)
     st.write(f"Análises: {user['credits']} / {limit}")
-    if user['credits'] >= limit and limit < 9999: st.error("Limite atingido!")
+    if user['credits'] >= limit and limit < 999990: st.error("Limite atingido!")
 
     st.divider()
     menu = st.radio("Menu", ["Análise de Editais", "📅 Calendário", "📂 Documentos da Empresa", "📜 Histórico", "Assinatura"])
@@ -553,7 +591,7 @@ if menu == "Admin":
     df = pd.DataFrame(stats)
     
     # Lista oficial de planos conforme salvo no Banco de Dados
-    valid_plans = ['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited']
+    valid_plans = ['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited_30', 'unlimited', 'expired']
     
     if not df.empty:
         k1, k2, k3 = st.columns(3)
@@ -616,9 +654,17 @@ if menu == "Admin":
                     
                     # O botão está dentro do form, identado corretamente
                     if st.form_submit_button("✅ Atualizar"):
+                        # Lógica Específica para Ilimitado 30 dias
+                        expiration = None
+                        if np == 'unlimited_30':
+                            # Define a validade para daqui a 30 dias exatos
+                            expiration = datetime.now() + timedelta(days=30)
+                        
                         db.admin_set_credits_used(sel_user, nc)
-                        db.admin_update_plan(sel_user, np)
-                        st.toast("Atualizado!"); time.sleep(1); st.rerun()
+                        # Passa a data de expiração para a função do banco
+                        db.admin_update_plan(sel_user, np, expires_at=expiration)
+                        
+                        st.toast("Atualizado com Sucesso!"); time.sleep(1); st.rerun()
                         
                 if st.button("🔄 Resetar Créditos (Zero)"):
                     db.admin_set_credits_used(sel_user, 0)

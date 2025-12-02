@@ -119,13 +119,11 @@ def login_user(login_input, password):
             query = users_ref.where('email', '==', login_input).stream()
             for q in query:
                 doc = q
-                break # Pega o primeiro encontrado
+                break 
 
         if doc.exists:
             d = doc.to_dict()
             stored_hash = d.get('password_hash', '')
-            
-            # Recupera o username real do documento (caso o login tenha sido por email)
             real_username = doc.id 
             
             password_ok = False
@@ -136,7 +134,6 @@ def login_user(login_input, password):
                 token = d.get('session_token', '')
                 if password != "ignorar_senha_aqui":
                     token = secrets.token_hex(16)
-                    # Atualiza usando o username real (ID do documento)
                     users_ref.document(real_username).update({'session_token': token})
                 
                 return True, {
@@ -148,7 +145,8 @@ def login_user(login_input, password):
                     "role": d.get('role', 'user'),
                     "plan_type": d.get('plan_type', 'free'),
                     "credits_used": d.get('credits_used', 0),
-                    "token": token
+                    "token": token,
+                    "plan_expires_at": d.get('plan_expires_at') # CAMPO ADICIONADO
                 }
         return False, None
     except: return False, None
@@ -204,7 +202,16 @@ def recover_user_password(email):
 # --- SISTEMA DE CRÉDITOS ---
 
 def get_plan_limit(plan_type):
-    limits = {'free': 5, 'plano_15': 15, 'plano_30': 30, 'plano_60': 60, 'plano_90': 90, 'unlimited': 999999}
+    limits = {
+        'free': 5, 
+        'plano_15': 15, 
+        'plano_30': 30, 
+        'plano_60': 60, 
+        'plano_90': 90, 
+        'unlimited': 999999,
+        'unlimited_30': 999999, # Novo: Ilimitado temporário
+        'expired': 0            # Novo: Expirado (bloqueado)
+    }
     return limits.get(plan_type, 5)
 
 def consume_credit_atomic(username):
@@ -316,9 +323,13 @@ def admin_get_users_stats():
         return data
     except: return []
 
-def admin_update_plan(username, new_plan):
+def admin_update_plan(username, new_plan, expires_at=None):
     try:
-        db.collection('users').document(username).update({'plan_type': new_plan})
+        data = {'plan_type': new_plan}
+        if expires_at:
+            data['plan_expires_at'] = expires_at
+        
+        db.collection('users').document(username).update(data)
         return True
     except: return False
 
