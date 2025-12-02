@@ -947,6 +947,9 @@ elif menu == "Análise de Editais":
                         company_ai_files = []
                         
                         try:
+                            # --- ALTERAÇÃO AQUI: Captura o nome da empresa ---
+                            nome_empresa = user.get('company_name', 'Empresa Licitante')
+
                             for n, d in c_files:
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as t:
                                     t.write(d)
@@ -957,12 +960,16 @@ elif menu == "Análise de Editais":
                             
                             all_files = st.session_state.gemini_files_handles + company_ai_files
                             
-                            prompt_cross = """
+                            # --- ALTERAÇÃO AQUI: Prompt atualizado com o nome da empresa ---
+                            prompt_cross = f"""
                             ATUE COMO AUDITOR SÊNIOR E ESPECIALISTA EM ANÁLISE DOCUMENTAL DE ENGENHARIA.
                             
                             CONTEXTO:
                             Você possui acesso aos arquivos do EDITAL (primeiros arquivos) e aos arquivos da EMPRESA (últimos arquivos carregados).
                             Utilize visão computacional para ler documentos digitalizados/imagens.
+                            
+                            ⚠️ DADOS CRITICOS DA ANÁLISE:
+                            NOME DA EMPRESA LICITANTE (USUÁRIO): "{nome_empresa}"
                             
                             DIRETRIZES GERAIS:
                             1. LEITURA EXAUSTIVA: Analise TODOS os documentos fornecidos.
@@ -974,7 +981,8 @@ elif menu == "Análise de Editais":
                                - Analise os itens solicitados vs documentos apresentados.
                             
                             2. **QUALIFICAÇÃO TÉCNICA OPERACIONAL (EMPRESA)**
-                               - Foco: Atestados emitidos em nome da PESSOA JURÍDICA (Empresa).
+                               - Foco: Atestados emitidos EXCLUSIVAMENTE em nome da PESSOA JURÍDICA: "{nome_empresa}".
+                               - Se o atestado estiver em nome de outra empresa (exceto consórcios explicítos), NÃO considere como válido para Operacional.
                                - Liste cada exigência de capacidade da empresa.
                                - Documento Encontrado: Cite o atestado da empresa que atende (lembrando da similaridade técnica).
                                - Status: ✅ APTO / ⚠️ / ❌
@@ -1143,6 +1151,9 @@ elif menu == "📜 Histórico":
                                 st.error("Você não tem documentos na pasta da empresa.")
                             else:
                                 try:
+                                    # --- ALTERAÇÃO AQUI: Captura o nome da empresa ---
+                                    nome_empresa = user.get('company_name', 'Empresa Licitante')
+
                                     temps = []
                                     gemini_files = []
                                     for n, d in c_files:
@@ -1151,6 +1162,7 @@ elif menu == "📜 Histórico":
                                         temps.append(tp)
                                         gemini_files.append(genai.upload_file(tp, display_name=n))
                                     
+                                    # --- ALTERAÇÃO AQUI: Prompt atualizado ---
                                     prompt_hist = f"""
                                     ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA. 
                                     Compare os documentos anexados da empresa com o seguinte resumo de edital:
@@ -1159,6 +1171,9 @@ elif menu == "📜 Histórico":
                                     {content_txt}
                                     --- FIM RESUMO EDITAL ---
                                     
+                                    ⚠️ DADOS DA EMPRESA PARA VALIDAÇÃO:
+                                    Nome/Razão Social: "{nome_empresa}"
+
                                     DIRETRIZES:
                                     1. Analise TODOS os documentos.
                                     2. Aplique FLEXIBILIDADE TÉCNICA (serviços similares são aceitos).
@@ -1166,7 +1181,8 @@ elif menu == "📜 Histórico":
                                     TAREFA: Gere um Checklist de Viabilidade separado nas seguintes categorias OBRIGATÓRIAS:
                                     
                                     A) QUALIFICAÇÃO TÉCNICA OPERACIONAL (EMPRESA)
-                                    - Verifique se a EMPRESA (PJ) possui os atestados exigidos.
+                                    - Verifique se a EMPRESA "{nome_empresa}" (PJ) possui os atestados exigidos.
+                                    - Ignore atestados em nome de terceiros para esta qualificação.
                                     - Item do Edital -> Documento da Empresa -> Veredito.
                                     
                                     B) QUALIFICAÇÃO TÉCNICA PROFISSIONAL (EQUIPE)
