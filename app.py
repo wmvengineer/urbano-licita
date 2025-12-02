@@ -416,6 +416,7 @@ if not st.session_state.user:
                                 time.sleep(2) 
 
                 elif submitted_login:
+                    # 1. Verifica o Captcha
                     real_ans = st.session_state.log_n1 + st.session_state.log_n2
                     if captcha_ans != real_ans:
                         st.error("eCaptcha incorreto.")
@@ -424,18 +425,25 @@ if not st.session_state.user:
                         time.sleep(1)
                         st.rerun()
                     else:
-                        ok, d = db.login_user(u, p)
+                        # 2. Tenta fazer o login
+                        # 'response' pode ser o dicionário do usuário (Sucesso) ou uma string de erro (Falha/Banido)
+                        ok, response = db.login_user(u, p) 
+                        
                         if ok:
+                            d = response
                             st.session_state.user = {
                                 "username": d.get('username'), "name": d.get('name'),
                                 "role": d.get('role'), "plan": d.get('plan_type', 'free'),
                                 "credits": d.get('credits_used', 0), "token": d.get('token'),
-                                "company_name": d.get('company_name', ''),
-                                "cnpj": d.get('cnpj', '')
+                                "company_name": d.get('company_name', ''), "cnpj": d.get('cnpj', ''),
+                                "plan_expires_at": d.get('plan_expires_at')
                             }
+                            # Define o cookie para manter logado
                             cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
                             st.rerun()
-                        else: st.error("Erro no login.")
+                        else: 
+                            # 3. Exibe o erro retornado pelo banco (Senha errada ou Motivo da Exclusão)
+                            st.error(response if response else "Erro no login.")
                 elif sub_log:
                     if captcha_ans != (st.session_state.log_n1 + st.session_state.log_n2):
                         st.error("Captcha incorreto.")
