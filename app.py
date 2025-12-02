@@ -197,7 +197,14 @@ if st.session_state.user is None:
 
 def logout():
     st.session_state.user = None
-    cookie_manager.delete("urbano_auth")
+    try:
+        # Tenta remover o cookie. Se ele já não existir (KeyError), apenas ignora.
+        cookie_manager.delete("urbano_auth")
+    except KeyError:
+        pass
+    except Exception:
+        pass
+        
     time.sleep(1)
     st.rerun()
 
