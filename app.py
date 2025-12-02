@@ -436,6 +436,28 @@ if not st.session_state.user:
                             cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
                             st.rerun()
                         else: st.error("Erro no login.")
+                elif sub_log:
+                    if captcha_ans != (st.session_state.log_n1 + st.session_state.log_n2):
+                        st.error("Captcha incorreto.")
+                        st.session_state.log_n1 = random.randint(1, 9)
+                        st.session_state.log_n2 = random.randint(1, 9)
+                        time.sleep(1); st.rerun()
+                    else:
+                        ok, response = db.login_user(u, p) # Recebe msg ou dict
+                        if ok:
+                            d = response
+                            st.session_state.user = {
+                                "username": d.get('username'), "name": d.get('name'),
+                                "role": d.get('role'), "plan": d.get('plan_type', 'free'),
+                                "credits": d.get('credits_used', 0), "token": d.get('token'),
+                                "company_name": d.get('company_name', ''), "cnpj": d.get('cnpj', ''),
+                                "plan_expires_at": d.get('plan_expires_at')
+                            }
+                            cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
+                            st.rerun()
+                        else: 
+                            # Exibe a mensagem de erro (incluindo o motivo da exclusão)
+                            st.error(response if response else "Erro no login.")
         
         # --- ABA CADASTRO (ATUALIZADA) ---
         with t2:
@@ -588,125 +610,129 @@ with st.sidebar:
 if menu == "Admin":
     st.title("🔧 Gestão Administrativa")
     stats = db.admin_get_users_stats()
-    df = pd.DataFrame(stats)
+    df_raw = pd.DataFrame(stats)
     
-    # Lista oficial de planos conforme salvo no Banco de Dados
     valid_plans = ['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited_30', 'unlimited', 'expired']
     
-    if not df.empty:
+    if not df_raw.empty:
+        # Separa Ativos e Excluídos
+        df_active = df_raw[df_raw['is_deleted'] == False].copy()
+        df_deleted = df_raw[df_raw['is_deleted'] == True].copy()
+        
+        # --- MÉTRICAS ---
         k1, k2, k3 = st.columns(3)
-        k1.metric("Usuários", len(df))
-        k2.metric("Análises", df['credits'].sum() if 'credits' in df.columns else 0)
+        k1.metric("Usuários Ativos", len(df_active))
+        k2.metric("Usuários Excluídos", len(df_deleted))
+        k3.metric("Análises (Total)", df_raw['credits'].sum() if 'credits' in df_raw.columns else 0)
         
         st.divider()
-        c_search, c_clear = st.columns([0.8, 0.2])
-        search_term = c_search.text_input("🔍 Pesquisar", placeholder="Nome ou Email...")
-        
-        if search_term:
-            mask = df['username'].astype(str).str.contains(search_term, case=False) | \
-                   df['name'].astype(str).str.contains(search_term, case=False)
-            df_display = df[mask]
-        else:
-            df_display = df
 
-        st.subheader("Base de Usuários")
+        # --- TABELA DE USUÁRIOS ATIVOS ---
+        st.subheader("Base de Usuários Ativos")
         
-        # Correção: As opções do SelectboxColumn devem bater com o que existe no banco (free, unlimited, etc)
+        search_term = st.text_input("🔍 Pesquisar Ativos", placeholder="Nome ou Email...")
+        if search_term:
+            mask = df_active['username'].astype(str).str.contains(search_term, case=False) | \
+                   df_active['name'].astype(str).str.contains(search_term, case=False)
+            df_display = df_active[mask].copy()
+        else:
+            df_display = df_active.copy()
+
+        # TRUQUE PARA EXIBIR NOME AMIGÁVEL NA TABELA E PERMITIR EDIÇÃO
+        # Mapeamos o código 'plan' para o nome amigável para exibição
+        # Nota: Ao salvar, precisaremos reverter isso.
+        
+        # Cria coluna visual
+        df_display['plan_view'] = df_display['plan'].map(lambda x: PLAN_MAP.get(x, x))
+        
+        # Opções para o selectbox da tabela (Nomes Amigáveis)
+        friendly_options = [PLAN_MAP.get(p, p) for p in valid_plans]
+
         edited_df = st.data_editor(
             df_display,
             column_config={
                 "username": st.column_config.TextColumn("Usuário", disabled=True),
+                "name": st.column_config.TextColumn("Nome", disabled=True),
+                "company_name": st.column_config.TextColumn("Empresa", disabled=True),
+                "cnpj": st.column_config.TextColumn("CNPJ", disabled=True), # NOVO
+                "email": st.column_config.TextColumn("E-mail", disabled=True),
                 "credits": st.column_config.NumberColumn("Usados", disabled=True),
-                "plan": st.column_config.SelectboxColumn("Plano", options=valid_plans, required=True)
+                # Editamos a coluna visual, mas baseada nas opções amigáveis
+                "plan_view": st.column_config.SelectboxColumn("Plano (Editar)", options=friendly_options, required=True),
+                "plan": None, # Esconde o código interno
+                "is_deleted": None, "deletion_reason": None, "joined": None
             },
-            hide_index=True, use_container_width=True, key="users_editor"
+            column_order=["username", "name", "company_name", "cnpj", "plan_view", "credits"],
+            hide_index=True, use_container_width=True, key="users_editor_v2"
         )
 
-        if st.button("💾 Salvar Planos"):
+        if st.button("💾 Salvar Planos Alterados"):
             count = 0
+            # Inverte o mapa para salvar (Nome Amigável -> Código)
+            reverse_map = {v: k for k, v in PLAN_MAP.items()}
+            
             for i, row in edited_df.iterrows():
-                orig = df[df['username']==row['username']].iloc[0]
-                if orig['plan'] != row['plan']:
-                    db.admin_update_plan(row['username'], row['plan']); count+=1
+                # Busca o dado original pelo username (chave primária)
+                orig_row = df_active[df_active['username'] == row['username']]
+                if not orig_row.empty:
+                    orig_plan_code = orig_row.iloc[0]['plan']
+                    new_plan_friendly = row['plan_view']
+                    new_plan_code = reverse_map.get(new_plan_friendly, new_plan_friendly)
+                    
+                    if orig_plan_code != new_plan_code:
+                        db.admin_update_plan(row['username'], new_plan_code)
+                        count += 1
             if count: st.success(f"{count} atualizados!"); time.sleep(1); st.rerun()
 
         st.divider()
-        st.subheader("🛠️ Gestão Individual")
-        col_sel, col_act = st.columns([0.4, 0.6])
-        with col_sel:
-            sel_user = st.selectbox("Editar Usuário:", options=df_display['username'].tolist())
+        
+        # --- GESTÃO INDIVIDUAL (CRÉDITOS E EXCLUSÃO) ---
+        c_m1, c_m2 = st.columns(2)
+        
+        with c_m1:
+            st.subheader("🛠️ Gestão / Exclusão")
+            sel_user = st.selectbox("Selecionar Usuário Ativo:", options=df_active['username'].tolist(), key="sel_act_user")
+            
             if sel_user:
-                u_info = df[df['username'] == sel_user].iloc[0]
-                st.info(f"Plano: {u_info['plan']} | Usados: {u_info['credits']}")
-        with col_act:
-            if sel_user:
-                # Correção: Try/Except para garantir que o index exista e o botão apareça
-                with st.form("edit_cred"):
-                    nc = st.number_input("Definir 'Créditos Usados':", min_value=0, value=int(u_info['credits']))
-                    
-                    # Tenta achar o índice do plano atual na lista válida
-                    try:
-                        current_index = valid_plans.index(u_info['plan'])
-                    except ValueError:
-                        current_index = 0 # Se não achar (ex: admin antigo), joga para 'free'
-                    
-                    try: current_index = valid_plans.index(u_info['plan'])
-                    except ValueError: current_index = 0
-                    
-                    # ALTERAÇÃO AQUI: Adicionado format_func para mostrar nomes amigáveis
-                    np = st.selectbox(
-                        "Plano:", 
-                        valid_plans, 
-                        index=current_index,
-                        format_func=lambda x: PLAN_MAP.get(x, x)
-                    )
-                    
-                    if st.form_submit_button("✅ Atualizar"):
-                    
-                        # Lógica Específica para Ilimitado 30 dias
-                        expiration = None
-                        if np == 'unlimited_30':
-                            # Define a validade para daqui a 30 dias exatos
-                            expiration = datetime.now() + timedelta(days=30)
-                        
+                u_info = df_active[df_active['username'] == sel_user].iloc[0]
+                
+                # Form de Créditos
+                with st.form("edit_cred_single"):
+                    st.markdown(f"**{u_info['name']}** ({u_info['plan']})")
+                    nc = st.number_input("Créditos Usados:", min_value=0, value=int(u_info['credits']))
+                    if st.form_submit_button("Atualizar Créditos"):
                         db.admin_set_credits_used(sel_user, nc)
-                        # Passa a data de expiração para a função do banco
-                        db.admin_update_plan(sel_user, np, expires_at=expiration)
-                        
-                        st.toast("Atualizado com Sucesso!"); time.sleep(1); st.rerun()
-                        
-                if st.button("🔄 Resetar Créditos (Zero)"):
-                    db.admin_set_credits_used(sel_user, 0)
-                    st.toast("Resetado!"); time.sleep(1); st.rerun()
-        st.divider()
-        st.subheader("📧 Central de Notificações")
-        
-        col_test, col_run = st.columns(2)
-        
-        with col_test:
-            st.markdown("#### Teste de SMTP")
-            test_email = st.text_input("E-mail para teste", value=st.session_state.user['email'] if st.session_state.user.get('email') else "")
-            if st.button("📨 Enviar E-mail de Teste"):
-                if test_email:
-                    with st.spinner("Conectando ao Zoho..."):
-                        ok, msg = db.send_email(
-                            test_email, 
-                            "Teste de SMTP - Urbano", 
-                            "<h1>Funciona!</h1><p>Seu sistema de e-mail está configurado corretamente.</p>"
-                        )
-                        if ok: st.success(msg)
-                        else: st.error(msg)
-                else:
-                    st.warning("Preencha um e-mail.")
+                        st.toast("Créditos atualizados!"); time.sleep(1); st.rerun()
 
-        with col_run:
-            st.markdown("#### Disparo Manual de Avisos")
-            if st.button("🚀 Rodar Verificação de Prazos"):
-                with st.spinner("Verificando datas e enviando e-mails..."):
-                    log = db.check_deadlines_and_notify()
-                    st.text_area("Log de Execução", value=log, height=200)
+                st.markdown("---")
+                # Form de Exclusão
+                with st.form("form_ban"):
+                    reason = st.text_input("Motivo da Exclusão (Obrigatório):", placeholder="Ex: Falta de pagamento...")
+                    if st.form_submit_button("🚫 EXCLUIR USUÁRIO", type="primary"):
+                        if not reason: st.warning("Digite o motivo.")
+                        else:
+                            db.admin_ban_user(sel_user, reason)
+                            st.success(f"{sel_user} excluído."); time.sleep(1); st.rerun()
 
-        st.divider()            
+        # --- LISTA DE EXCLUÍDOS E RESTAURAÇÃO ---
+        with c_m2:
+            st.subheader("🗑️ Usuários Excluídos")
+            if df_deleted.empty:
+                st.info("Nenhum usuário excluído.")
+            else:
+                st.dataframe(
+                    df_deleted[['username', 'name', 'deletion_reason']],
+                    column_config={
+                        "username": "Usuário", "name": "Nome", "deletion_reason": "Motivo da Exclusão"
+                    },
+                    hide_index=True, use_container_width=True
+                )
+                
+                sel_del = st.selectbox("Selecionar para Restaurar:", options=df_deleted['username'].tolist(), key="sel_del_user")
+                if sel_del:
+                     if st.button(f"♻️ Restaurar {sel_del}"):
+                         db.admin_restore_user(sel_del)
+                         st.success("Conta restaurada!"); time.sleep(1); st.rerun()          
 
 # 2. DOCUMENTOS
 elif menu == "📂 Documentos da Empresa":

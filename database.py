@@ -111,10 +111,10 @@ def login_user(login_input, password):
     try:
         users_ref = db.collection('users')
         
-        # 1. Tenta buscar pelo Username (ID do documento)
+        # 1. Tenta buscar pelo Username
         doc = users_ref.document(login_input).get()
         
-        # 2. Se não achar pelo ID, tenta buscar pelo campo Email
+        # 2. Se não achar, busca pelo Email
         if not doc.exists:
             query = users_ref.where('email', '==', login_input).stream()
             for q in query:
@@ -123,6 +123,13 @@ def login_user(login_input, password):
 
         if doc.exists:
             d = doc.to_dict()
+            
+            # --- NOVO: VERIFICAÇÃO DE CONTA EXCLUÍDA ---
+            if d.get('is_deleted', False):
+                reason = d.get('deletion_reason', 'Violação de Termos.')
+                return False, f"CONTA SUSPENSA/EXCLUÍDA. Motivo: {reason}"
+            # -------------------------------------------
+
             stored_hash = d.get('password_hash', '')
             real_username = doc.id 
             
@@ -146,10 +153,10 @@ def login_user(login_input, password):
                     "plan_type": d.get('plan_type', 'free'),
                     "credits_used": d.get('credits_used', 0),
                     "token": token,
-                    "plan_expires_at": d.get('plan_expires_at') # CAMPO ADICIONADO
+                    "plan_expires_at": d.get('plan_expires_at')
                 }
-        return False, None
-    except: return False, None
+        return False, "Usuário ou senha incorretos."
+    except Exception as e: return False, str(e)
 
 def check_session_valid(username, current_token):
     try:
@@ -315,10 +322,13 @@ def admin_get_users_stats():
                 'username': d['username'],
                 'name': d['name'],
                 'company_name': d.get('company_name', '-'),
+                'cnpj': d.get('cnpj', '-'), # NOVO
                 'email': d.get('email', '-'),
                 'plan': d.get('plan_type', 'free'),
                 'credits': d.get('credits_used', 0),
-                'joined': d.get('created_at', datetime.datetime.now())
+                'joined': d.get('created_at', datetime.datetime.now()),
+                'is_deleted': d.get('is_deleted', False),        # NOVO
+                'deletion_reason': d.get('deletion_reason', '')  # NOVO
             })
         return data
     except: return []
@@ -338,6 +348,26 @@ def admin_set_credits_used(username, new_amount):
         val = int(new_amount)
         if val < 0: val = 0
         db.collection('users').document(username).update({'credits_used': val})
+        return True
+    except: return False
+    
+def admin_ban_user(username, reason):
+    """Marca o usuário como excluído e salva o motivo."""
+    try:
+        db.collection('users').document(username).update({
+            'is_deleted': True,
+            'deletion_reason': reason
+        })
+        return True
+    except: return False
+
+def admin_restore_user(username):
+    """Restaura o usuário e limpa o motivo."""
+    try:
+        db.collection('users').document(username).update({
+            'is_deleted': False,
+            'deletion_reason': firestore.DELETE_FIELD
+        })
         return True
     except: return False
 
