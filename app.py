@@ -160,35 +160,25 @@ def render_status_controls(item_id, current_status, current_note):
 
 # --- SESSÃO & COOKIES ---
 import time
-from datetime import datetime, timedelta
 
-# Inicializa o gerenciador com uma chave fixa para não recriar o componente
+# Inicializa o gerenciador
 cookie_manager = stx.CookieManager(key="urbano_cookies")
 
 # Garante a estrutura do usuário na sessão
 if 'user' not in st.session_state:
     st.session_state.user = None
 
-# Lógica de Recuperação de Sessão (Executa apenas se não estiver logado)
+# Lógica de Recuperação de Sessão
 if st.session_state.user is None:
-    # Tenta ler os cookies imediatamente
-    cookies = cookie_manager.get_all()
+    # Pequeno delay para garantir que o navegador enviou o cookie
+    # Agora que o CORS/XSRF está desligado no config.toml, isso vai funcionar.
+    time.sleep(0.3)
     
-    # Se a lista de cookies vier vazia (comum no 1º carregamento após F5),
-    # aguardamos um momento para o componente sincronizar com o navegador.
-    if not cookies:
-        time.sleep(0.5)
-        cookies = cookie_manager.get_all()
-    
-    # Verifica se o cookie de autenticação existe
-    auth_cookie = cookies.get("urbano_auth") if cookies else None
+    auth_cookie = cookie_manager.get("urbano_auth")
     
     if auth_cookie:
         try:
-            # Formato esperado: "username|token"
             u, t = auth_cookie.split('|')
-            
-            # Valida contra o banco de dados
             if db.check_session_valid(u, t):
                 raw = db.get_user_by_username(u)
                 if raw:
@@ -200,10 +190,8 @@ if st.session_state.user is None:
                         "credits": raw.get('credits_used', 0), 
                         "token": raw.get('token')
                     }
-                    st.rerun() # Atualiza a tela imediatamente para a área logada
-        except Exception as e:
-            # Se o cookie estiver corrompido ou inválido, ignora silenciosamente
-            # e deixa o fluxo seguir para a tela de login
+                    st.rerun()
+        except:
             pass
 
 def logout():
