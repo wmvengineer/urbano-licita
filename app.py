@@ -452,7 +452,9 @@ if not st.session_state.user:
             with st.form("f_cad"):
                 # Novos Campos no Início
                 nc_empresa = st.text_input("Nome da Empresa", placeholder="Razão Social")
-                nc_cnpj = st.text_input("CNPJ", placeholder="00.000.000/0000-00")
+                
+                # ALTERAÇÃO 1: Campo configurado para sugerir apenas números e limitar a 14 digitos
+                nc_cnpj = st.text_input("CNPJ (Somente Números)", placeholder="Ex: 12345678000190", max_chars=14)
 
                 nu = st.text_input("Usuário", placeholder="Escolha um usuário")
                 nn = st.text_input("Nome", placeholder="Seu nome completo")
@@ -467,17 +469,27 @@ if not st.session_state.user:
 
                 if st.form_submit_button("CADASTRAR"):
                     real_cad_ans = st.session_state.cad_n1 + st.session_state.cad_n2
+                    
+                    # 1. Valida Captcha
                     if cad_captcha_ans != real_cad_ans:
                         st.error("eCaptcha incorreto.")
                         st.session_state.cad_n1 = random.randint(1, 9)
                         st.session_state.cad_n2 = random.randint(1, 9)
                         time.sleep(1)
                         st.rerun()
+                    
+                    # ALTERAÇÃO 2: Valida se o CNPJ contém apenas números
+                    elif not nc_cnpj.isdigit():
+                        st.error("O CNPJ deve ser preenchido estritamente com números (sem pontos, barras ou traços).")
+                    
+                    # 3. Prossegue com o cadastro
                     else:
-                        # Chamada atualizada com empresa e cnpj
                         ok, m = db.register_user(nu, nn, ne, np, nc_empresa, nc_cnpj)
-                        if ok: st.success("Criado! Faça login com seu e-mail e senha cadastrados."); time.sleep(1)
-                        else: st.error(m)
+                        if ok: 
+                            st.success("Criado! Faça login com seu e-mail e senha cadastrados.")
+                            time.sleep(1)
+                        else: 
+                            st.error(m)
     st.stop()
 
 # --- ÁREA LOGADA ---
