@@ -66,7 +66,6 @@ def init_db():
     except Exception as e:
         print(f"Erro init DB: {e}")
 
-# --- AQUI ESTAVA O ERRO: A FUNÇÃO AGORA RECEBE 6 ARGUMENTOS ---
 def register_user(username, name, email, password, company_name, cnpj):
     try:
         users_ref = db.collection('users')
@@ -78,8 +77,8 @@ def register_user(username, name, email, password, company_name, cnpj):
             'username': username,
             'name': name,
             'email': email,
-            'company_name': company_name, # Novo Campo Salvo
-            'cnpj': cnpj,                 # Novo Campo Salvo
+            'company_name': company_name, 
+            'cnpj': cnpj,                 
             'password_hash': hashed,
             'role': 'user',
             'plan_type': 'free',
@@ -91,12 +90,27 @@ def register_user(username, name, email, password, company_name, cnpj):
     except Exception as e:
         return False, str(e)
 
-def login_user(username, password):
+# ATUALIZADO: Lógica para aceitar Usuário OU E-mail
+def login_user(login_input, password):
     try:
-        doc = db.collection('users').document(username).get()
+        users_ref = db.collection('users')
+        
+        # 1. Tenta buscar pelo Username (ID do documento)
+        doc = users_ref.document(login_input).get()
+        
+        # 2. Se não achar pelo ID, tenta buscar pelo campo Email
+        if not doc.exists:
+            query = users_ref.where('email', '==', login_input).stream()
+            for q in query:
+                doc = q
+                break # Pega o primeiro encontrado
+
         if doc.exists:
             d = doc.to_dict()
             stored_hash = d.get('password_hash', '')
+            
+            # Recupera o username real do documento (caso o login tenha sido por email)
+            real_username = doc.id 
             
             password_ok = False
             if password == "ignorar_senha_aqui": password_ok = True 
@@ -106,14 +120,15 @@ def login_user(username, password):
                 token = d.get('session_token', '')
                 if password != "ignorar_senha_aqui":
                     token = secrets.token_hex(16)
-                    db.collection('users').document(username).update({'session_token': token})
+                    # Atualiza usando o username real (ID do documento)
+                    users_ref.document(real_username).update({'session_token': token})
                 
                 return True, {
-                    "username": username,
+                    "username": real_username,
                     "name": d.get('name'),
                     "email": d.get('email'),
-                    "company_name": d.get('company_name', ''), # Retorno Atualizado
-                    "cnpj": d.get('cnpj', ''),                 # Retorno Atualizado
+                    "company_name": d.get('company_name', ''), 
+                    "cnpj": d.get('cnpj', ''),                 
                     "role": d.get('role', 'user'),
                     "plan_type": d.get('plan_type', 'free'),
                     "credits_used": d.get('credits_used', 0),

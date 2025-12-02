@@ -447,7 +447,7 @@ if not st.session_state.user:
                     else:
                         # Chamada atualizada com empresa e cnpj
                         ok, m = db.register_user(nu, nn, ne, np, nc_empresa, nc_cnpj)
-                        if ok: st.success("Criado! Faça login."); time.sleep(1)
+                        if ok: st.success("Criado! Faça login com seu e-mail e senha cadastrados."); time.sleep(1)
                         else: st.error(m)
     st.stop()
 
