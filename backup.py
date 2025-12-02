@@ -9,7 +9,8 @@ from datetime import datetime, timedelta
 import database as db
 import extra_streamlit_components as stx
 from io import BytesIO
-import random  # <--- NOVA IMPORTAÇÃO PARA O CAPTCHA
+import random
+import base64 
 
 # --- LIBS PARA PDF E CALENDÁRIO ---
 from xhtml2pdf import pisa
@@ -17,20 +18,37 @@ import markdown
 from streamlit_calendar import calendar
 
 # --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Urbano", layout="wide", page_icon="🏢")
+# Define o ícone da página (Favicon)
+icon_file = "LOGO URBANO OFICIAL.png" if os.path.exists("LOGO URBANO OFICIAL.png") else "🏢"
+st.set_page_config(page_title="Urbano", layout="wide", page_icon=icon_file)
 
 # API KEY
 try:
     if "GOOGLE_API_KEY" in st.secrets:
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
     else:
-        # Fallback local se necessário
         pass
 except:
     st.error("Configure a API Key.")
     st.stop()
 
 db.init_db()
+
+# --- CSS LIMPO (A Guilhotina resolve o rodapé no HTML) ---
+st.markdown("""
+    <style>
+        /* Esconde menu superior (3 pontinhos) e cabeçalho */
+        [data-testid="stToolbar"], [data-testid="stDecoration"], header {
+            display: none !important;
+        }
+        
+        /* Remove padding extra no fundo para aproveitar o espaço */
+        .main .block-container {
+            padding-bottom: 0px !important;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 
 # --- AUTOMAÇÃO DE E-MAILS (Disparo Diário) ---
 try:
@@ -44,11 +62,18 @@ except:
 DOC_STRUCTURE = {
     "1. Habilitacao Juridica": ["Contrato Social", "CNPJ", "Documentos Sócios"],
     "2. Habilitacao Fiscal": ["Federal", "Estadual", "Municipal", "FGTS", "Trabalhista"],
-    "3. Qualificacao Tecnica": ["Atestados Operacionais", "Atestados Profissionais", "CAT"],
+    "3. Qualificacao Tecnica": ["Atestados Operacionais", "Atestados Profissionais", "Certidao de Registro no Conselho - Profissionais", "Certidao de Registro no Conselho - Empresa"],
     "4. Habilitacao Financeira": ["Balanco Patrimonial", "Indices Financeiros", "Certidao Falencia"]
 }
 
 # --- FUNÇÕES AUXILIARES ---
+
+def get_base64_image(image_path):
+    """Converte imagem local para base64 para uso em HTML."""
+    if os.path.exists(image_path):
+        with open(image_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode()
+    return None
 
 def convert_to_pdf(source_md):
     """Converte Markdown para PDF com estilo profissional."""
@@ -74,71 +99,53 @@ def convert_to_pdf(source_md):
     return result_file.getvalue()
 
 def extract_title(text):
-    """
-    Extrai título no padrão: "Edital" + "Órgão" + "Data de Abertura/Limite"
-    Usa a tag DATA_CHAVE inserida via Prompt para garantir precisão.
-    """
     try:
-        # 1. Extração do Órgão
         orgao = "Órgão Indefinido"
         match_orgao = re.search(r"(?:1\.|órgão).*?[:\-\?]\s*(.*?)(?:\n|2\.|Qual|$)", text, re.IGNORECASE)
         if match_orgao: 
             orgao = match_orgao.group(1).replace("*", "").strip()
 
-        # 2. Extração da Data (Busca pela tag forçada no prompt)
         data_sessao = "Data Pendente"
         match_data_tag = re.search(r"DATA_CHAVE:\s*(\d{2}/\d{2}/\d{4})", text)
         
         if match_data_tag:
             data_sessao = match_data_tag.group(1)
         else:
-            # Fallback: Procura qualquer data na resposta da pergunta 5
             match_q5 = re.search(r"5\.(.*?)(?:6\.|CRONOGRAMA|\n\n|$)", text, re.DOTALL | re.IGNORECASE)
             if match_q5:
                 match_generic = re.search(r"(\d{2}/\d{2}/\d{4})", match_q5.group(1))
                 if match_generic: data_sessao = match_generic.group(1)
 
-        # Retorna no padrão solicitado para o Histórico
         return f"Edital {orgao} | {data_sessao}"
     except:
         return f"Edital Processado em {datetime.now().strftime('%d/%m/%Y')}"
 
 def extract_date_for_calendar(title_str):
-    """Extrai YYYY-MM-DD do título para o componente de calendário."""
     try:
         match = re.search(r"(\d{2})/(\d{2})/(\d{4})", title_str)
         if match:
-            # Retorna YYYY-MM-DD
             return f"{match.group(3)}-{match.group(2)}-{match.group(1)}"
     except: pass
     return None
 
 def render_status_controls(item_id, current_status, current_note):
-    """Renderiza os controles de status (Checks Coloridos) e salva no banco."""
     st.caption("Classificação do Edital (Marque uma opção):")
     c1, c2, c3 = st.columns([0.15, 0.15, 0.7])
     
-    # Checkboxes agindo como Radio Buttons manuais
     is_red = c1.checkbox("🟥 Inviável", value=(current_status=='red'), key=f"r_{item_id}")
     is_yellow = c2.checkbox("🟨 Ajustes", value=(current_status=='yellow'), key=f"y_{item_id}")
     is_green = c3.checkbox("🟩 Apto", value=(current_status=='green'), key=f"g_{item_id}")
 
     new_status = current_status
-    
-    # Lógica de seleção única
     if is_red and current_status != 'red': new_status = 'red'
     elif is_yellow and current_status != 'yellow': new_status = 'yellow'
     elif is_green and current_status != 'green': new_status = 'green'
-    
-    # Se desmarcar o atual, volta para None
     if not is_red and not is_yellow and not is_green: new_status = None
 
-    # Lógica de atualização (se mudou, salva e recarrega para atualizar checks)
     if new_status != current_status:
         db.update_analysis_status(st.session_state.user['username'], item_id, new_status, current_note)
         st.rerun()
 
-    # Caixa de Texto Condicional para Observação
     if new_status:
         placeholder_text = ""
         if new_status == 'red': placeholder_text = "Descreva os motivos da inviabilidade..."
@@ -152,25 +159,40 @@ def render_status_controls(item_id, current_status, current_note):
             st.toast("Observação salva com sucesso!")
 
 # --- SESSÃO & COOKIES ---
-cookie_manager = stx.CookieManager(key="urbano_cookies")
-if 'user' not in st.session_state: st.session_state.user = None
+import time
 
-if not st.session_state.user:
-    time.sleep(0.1)
-    c = cookie_manager.get("urbano_auth")
-    if c:
+# Inicializa o gerenciador
+cookie_manager = stx.CookieManager(key="urbano_cookies")
+
+# Garante a estrutura do usuário na sessão
+if 'user' not in st.session_state:
+    st.session_state.user = None
+
+# Lógica de Recuperação de Sessão
+if st.session_state.user is None:
+    # Pequeno delay para garantir que o navegador enviou o cookie
+    # Agora que o CORS/XSRF está desligado no config.toml, isso vai funcionar.
+    time.sleep(0.3)
+    
+    auth_cookie = cookie_manager.get("urbano_auth")
+    
+    if auth_cookie:
         try:
-            u, t = c.split('|')
+            u, t = auth_cookie.split('|')
             if db.check_session_valid(u, t):
                 raw = db.get_user_by_username(u)
                 if raw:
                     st.session_state.user = {
-                        "username": raw.get('username'), "name": raw.get('name'),
-                        "role": raw.get('role'), "plan": raw.get('plan_type', 'free'),
-                        "credits": raw.get('credits_used', 0), "token": raw.get('token')
+                        "username": raw.get('username'), 
+                        "name": raw.get('name'),
+                        "role": raw.get('role'), 
+                        "plan": raw.get('plan_type', 'free'),
+                        "credits": raw.get('credits_used', 0), 
+                        "token": raw.get('token')
                     }
                     st.rerun()
-        except: pass
+        except:
+            pass
 
 def logout():
     st.session_state.user = None
@@ -178,83 +200,262 @@ def logout():
     time.sleep(1)
     st.rerun()
 
-# --- TELA DE LOGIN ---
+# --- TELA DE LOGIN (Redesign V3) ---
 if not st.session_state.user:
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        if os.path.exists("LOGO URBANO OFICIAL.png"): st.image("LOGO URBANO OFICIAL.png", width=150)
-        else: st.title("🏢")
-    with c2: st.title("Urbano - Inteligência em Licitações")
-    
-    t1, t2 = st.tabs(["Login", "Cadastro"])
-    
-    # --- ABA LOGIN ---
-    with t1:
-        with st.form("f_login"):
-            u = st.text_input("Usuário"); p = st.text_input("Senha", type="password")
-            
-            # eCaptcha Login
-            if 'log_n1' not in st.session_state: st.session_state.log_n1 = random.randint(1, 9)
-            if 'log_n2' not in st.session_state: st.session_state.log_n2 = random.randint(1, 9)
-            
-            st.caption("Segurança")
-            col_cap1, col_cap2 = st.columns([0.4, 0.6])
-            with col_cap1:
-                st.markdown(f"**eCaptcha: {st.session_state.log_n1} + {st.session_state.log_n2} = ?**")
-            with col_cap2:
-                captcha_ans = st.number_input("Resultado", step=1, label_visibility="collapsed", key="in_cap_log")
+    st.markdown("""
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&display=swap');
 
-            if st.form_submit_button("Entrar"):
-                # Validação Captcha
-                real_ans = st.session_state.log_n1 + st.session_state.log_n2
-                if captcha_ans != real_ans:
-                    st.error("eCaptcha incorreto. Tente novamente.")
-                    # Reseta números
-                    st.session_state.log_n1 = random.randint(1, 9)
-                    st.session_state.log_n2 = random.randint(1, 9)
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    ok, d = db.login_user(u, p)
-                    if ok:
-                        st.session_state.user = {
-                            "username": d.get('username'), "name": d.get('name'),
-                            "role": d.get('role'), "plan": d.get('plan_type', 'free'),
-                            "credits": d.get('credits_used', 0), "token": d.get('token')
-                        }
-                        cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
+        .stApp {
+            background-image: url('https://colorlib.com/etc/lf/Login_v3/images/bg-01.jpg');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            font-family: 'Poppins', sans-serif;
+        }
+
+        header {visibility: hidden;}
+        footer {visibility: hidden;}
+        .block-container {
+            padding-top: 5rem;
+            padding-bottom: 5rem;
+        }
+
+        div[data-testid="stForm"] {
+            border-radius: 10px;
+            padding: 55px 55px 37px 55px;
+            overflow: hidden;
+            background: #20404F;
+            background: -webkit-linear-gradient(top, #394E53, #173a50);
+            background: linear-gradient(top, #394E53, #173a50);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            border: none;
+        }
+
+        div[data-testid="stTextInput"] label, div[data-testid="stNumberInput"] label {
+            color: #eeeeee !important;
+            font-family: 'Poppins', sans-serif;
+            font-size: 13px;
+        }
+        
+        /* ALTERAÇÃO AQUI: Cor do texto mudada para #364C50 */
+        div[data-testid="stTextInput"] input, div[data-testid="stNumberInput"] input {
+            background-color: transparent !important;
+            color: #364C50 !important; 
+            border: none !important;
+            border-bottom: 2px solid rgba(255,255,255,0.24) !important;
+            border-radius: 0px !important;
+            padding-left: 5px !important;
+            font-family: 'Poppins', sans-serif;
+        }
+        
+        div[data-testid="stTextInput"] input:focus, div[data-testid="stNumberInput"] input:focus {
+            border-bottom: 2px solid #fff !important;
+            box-shadow: none !important;
+        }
+
+        /* NOVA REGRA: Remove o texto "Press Enter to Submit Form" */
+        [data-testid="InputInstructions"] {
+            display: none !important;
+        }
+
+        /* Botões Gerais do Formulário */
+        div.stButton > button {
+            font-family: 'Poppins', sans-serif;
+            font-size: 16px;
+            color: #555555 !important;
+            line-height: 1.2;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 0 20px;
+            min-width: 120px;
+            height: 50px;
+            border-radius: 25px;
+            background: #fff !important;
+            border: none !important;
+            width: 100%;
+            margin-top: 20px;
+            font-weight: 600;
+            transition: all 0.4s;
+        }
+        div.stButton > button:hover {
+            background-color: #333 !important;
+            color: #fff !important;
+        }
+
+        /* --- ESTILO DAS ABAS (Cor #364C50 Opaca) --- */
+        .stTabs [data-baseweb="tab-list"] {
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .stTabs [data-baseweb="tab"] {
+            background-color: #364C50 !important;
+            color: #fff !important;
+            font-family: 'Poppins', sans-serif;
+            font-size: 14px;
+            border: none;
+            border-radius: 15px 15px 0 0;
+            padding: 10px 20px;
+            margin-right: 2px;
+            transition: all 0.3s;
+            opacity: 1 !important;
+        }
+        .stTabs [aria-selected="true"] {
+            background-color: #364C50 !important;
+            font-weight: bold;
+            opacity: 1 !important;
+            border-bottom: 2px solid #fff;
+        }
+        .stTabs [data-baseweb="tab-highlight"] {
+            background-color: transparent; 
+        }
+
+        /* 2. Botão Recuperar Senha (#babac2) */
+        [data-testid="stForm"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:nth-of-type(2) button {
+            background-color: #babac2 !important;
+            color: #fff !important;
+        }
+        [data-testid="stForm"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:nth-of-type(2) button:hover {
+            background-color: #9a9a9f !important;
+        }
+
+        /* Alerts */
+        div[data-baseweb="notification"] {
+            background-color: rgba(255, 255, 255, 0.9);
+            border-radius: 10px;
+        }
+        
+        [data-testid="stVerticalBlock"] > [style*="flex-direction: column;"] > [data-testid="stVerticalBlock"] {
+            align-items: center;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    col_spacer_l, col_login, col_spacer_r = st.columns([1, 1.5, 1])
+    
+    with col_login:
+        # Carrega imagem em Base64 para HTML
+        img_b64 = get_base64_image("LOGO URBANO OFICIAL.png")
+        img_src = f"data:image/png;base64,{img_b64}" if img_b64 else ""
+
+        # Cabeçalho Visual (Logo e Título)
+        # CONTAINER AUMENTADO (160px) COM IMAGEM FIXA (110px) PARA AUMENTAR BORDA BRANCA
+        if img_src:
+            html_logo = f"""
+            <div style="text-align: center; margin-bottom: 30px;">
+                <div style="
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    width: 160px;
+                    height: 160px;
+                    border-radius: 50%;
+                    background-color: #fff;
+                    margin: 0 auto;
+                    overflow: hidden;
+                    box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+                ">
+                    <img src="{img_src}" style="width: 110px; height: auto; object-fit: contain;" />
+                </div>
+            </div>
+            """
+        else:
+            # Fallback se a imagem não existir
+            html_logo = """<div style="text-align: center; margin-bottom: 30px; font-size: 50px;">🏢</div>"""
+
+        st.markdown(html_logo, unsafe_allow_html=True)
+
+        t1, t2 = st.tabs(["ENTRAR", "CRIAR CONTA"])
+        
+        # --- ABA LOGIN ---
+        with t1:
+            with st.form("f_login"):
+                u = st.text_input("Usuário ou E-mail", placeholder="Digite seu usuário ou e-mail")
+                p = st.text_input("Senha", type="password", placeholder="Digite sua senha")
+                
+                # eCaptcha Login
+                if 'log_n1' not in st.session_state: st.session_state.log_n1 = random.randint(1, 9)
+                if 'log_n2' not in st.session_state: st.session_state.log_n2 = random.randint(1, 9)
+                
+                st.markdown(f"<p style='color: white; font-size: 12px; margin-bottom: 0px; margin-top: 15px;'>Segurança: Quanto é {st.session_state.log_n1} + {st.session_state.log_n2}?</p>", unsafe_allow_html=True)
+                captcha_ans = st.number_input("Resultado Captcha", step=1, label_visibility="collapsed", key="in_cap_log")
+
+                # Layout de Botões Lado a Lado
+                c_btn_log, c_btn_rec = st.columns(2)
+                
+                with c_btn_log:
+                    submitted_login = st.form_submit_button("LOGIN")
+                with c_btn_rec:
+                    submitted_recover = st.form_submit_button("RECUPERAR")
+
+                if submitted_recover:
+                    # Lógica de Recuperação
+                    if not u or "@" not in u:
+                        st.warning("Para recuperar sua senha, digite seu E-MAIL no campo 'Usuário ou E-mail' acima e clique em Recuperar novamente.")
+                        st.session_state.log_n1 = random.randint(1, 9) # Reset Captcha
+                    else:
+                        real_ans = st.session_state.log_n1 + st.session_state.log_n2
+                        if captcha_ans != real_ans:
+                            st.error("Captcha incorreto.")
+                        else:
+                            with st.spinner("Enviando senha temporária..."):
+                                ok, msg = db.recover_user_password(u)
+                                if ok: st.success(msg)
+                                else: st.error(msg)
+                                time.sleep(2) # Dar tempo de ler
+
+                elif submitted_login:
+                    # Lógica de Login
+                    real_ans = st.session_state.log_n1 + st.session_state.log_n2
+                    if captcha_ans != real_ans:
+                        st.error("eCaptcha incorreto.")
+                        st.session_state.log_n1 = random.randint(1, 9)
+                        st.session_state.log_n2 = random.randint(1, 9)
+                        time.sleep(1)
                         st.rerun()
-                    else: st.error("Erro no login.")
-    
-    # --- ABA CADASTRO ---
-    with t2:
-        with st.form("f_cad"):
-            nu = st.text_input("Usuário"); nn = st.text_input("Nome"); ne = st.text_input("Email"); np = st.text_input("Senha", type="password")
-            
-            # eCaptcha Cadastro
-            if 'cad_n1' not in st.session_state: st.session_state.cad_n1 = random.randint(1, 9)
-            if 'cad_n2' not in st.session_state: st.session_state.cad_n2 = random.randint(1, 9)
-            
-            st.caption("Segurança")
-            col_cc1, col_cc2 = st.columns([0.4, 0.6])
-            with col_cc1:
-                st.markdown(f"**eCaptcha: {st.session_state.cad_n1} + {st.session_state.cad_n2} = ?**")
-            with col_cc2:
-                cad_captcha_ans = st.number_input("Resultado", step=1, label_visibility="collapsed", key="in_cap_cad")
+                    else:
+                        ok, d = db.login_user(u, p)
+                        if ok:
+                            st.session_state.user = {
+                                "username": d.get('username'), "name": d.get('name'),
+                                "role": d.get('role'), "plan": d.get('plan_type', 'free'),
+                                "credits": d.get('credits_used', 0), "token": d.get('token')
+                            }
+                            cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
+                            st.rerun()
+                        else: st.error("Erro no login.")
+        
+        # --- ABA CADASTRO ---
+        with t2:
+            with st.form("f_cad"):
+                nu = st.text_input("Usuário", placeholder="Escolha um usuário")
+                nn = st.text_input("Nome", placeholder="Seu nome completo")
+                ne = st.text_input("Email", placeholder="Seu melhor e-mail")
+                np = st.text_input("Senha", type="password", placeholder="Escolha uma senha")
+                
+                # eCaptcha Cadastro
+                if 'cad_n1' not in st.session_state: st.session_state.cad_n1 = random.randint(1, 9)
+                if 'cad_n2' not in st.session_state: st.session_state.cad_n2 = random.randint(1, 9)
+                
+                st.markdown(f"<p style='color: white; font-size: 12px; margin-bottom: 0px; margin-top: 15px;'>Segurança: Quanto é {st.session_state.cad_n1} + {st.session_state.cad_n2}?</p>", unsafe_allow_html=True)
+                cad_captcha_ans = st.number_input("Resultado Captcha Cad", step=1, label_visibility="collapsed", key="in_cap_cad")
 
-            if st.form_submit_button("Criar Conta"):
-                # Validação Captcha
-                real_cad_ans = st.session_state.cad_n1 + st.session_state.cad_n2
-                if cad_captcha_ans != real_cad_ans:
-                    st.error("eCaptcha incorreto.")
-                    st.session_state.cad_n1 = random.randint(1, 9)
-                    st.session_state.cad_n2 = random.randint(1, 9)
-                    time.sleep(1)
-                    st.rerun()
-                else:
-                    ok, m = db.register_user(nu, nn, ne, np)
-                    if ok: st.success("Criado! Faça login."); time.sleep(1)
-                    else: st.error(m)
+                if st.form_submit_button("CADASTRAR"):
+                    # Validação Captcha
+                    real_cad_ans = st.session_state.cad_n1 + st.session_state.cad_n2
+                    if cad_captcha_ans != real_cad_ans:
+                        st.error("eCaptcha incorreto.")
+                        st.session_state.cad_n1 = random.randint(1, 9)
+                        st.session_state.cad_n2 = random.randint(1, 9)
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        ok, m = db.register_user(nu, nn, ne, np)
+                        if ok: st.success("Criado! Faça login."); time.sleep(1)
+                        else: st.error(m)
     st.stop()
 
 # --- ÁREA LOGADA ---
@@ -271,7 +472,58 @@ if fresh:
     limit = db.get_plan_limit(user['plan'])
 else: logout()
 
+# --- CSS PARA A SIDEBAR (Barra Lateral) ---
+st.markdown("""
+    <style>
+    /* Altera o fundo da Sidebar para #364C50 */
+    [data-testid="stSidebar"] {
+        background-color: #364C50;
+    }
+    
+    /* Altera todos os textos da Sidebar para Branco */
+    [data-testid="stSidebar"] h1, 
+    [data-testid="stSidebar"] h2, 
+    [data-testid="stSidebar"] h3, 
+    [data-testid="stSidebar"] span, 
+    [data-testid="stSidebar"] div, 
+    [data-testid="stSidebar"] label, 
+    [data-testid="stSidebar"] p {
+        color: #FFFFFF !important;
+    }
+    
+    /* Mantém o texto interno do botão "Sair" na cor original (escuro) para contraste com o botão branco */
+    [data-testid="stSidebar"] .stButton button div,
+    [data-testid="stSidebar"] .stButton button p {
+        color: #31333F !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 with st.sidebar:
+    # LOGO EM CÍRCULO BRANCO (250px container / 150px logo)
+    img_b64_side = get_base64_image("LOGO URBANO OFICIAL.png")
+    if img_b64_side:
+        st.markdown(f"""
+            <div style="display: flex; justify-content: center; margin-bottom: 20px;">
+                <div style="
+                    width: 200px;
+                    height: 200px;
+                    background-color: white;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    overflow: hidden;
+                    box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+                ">
+                    <img src="data:image/png;base64,{img_b64_side}" style="width: 150px; height: auto; object-fit: contain;">
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+    else:
+        # Fallback
+        st.markdown("<div style='font-size: 80px; text-align: center; color: white;'>🏢</div>", unsafe_allow_html=True)
+
     st.markdown(f"### Olá, {user['name']}")
     st.caption(f"Plano: **{user['plan'].upper()}**")
     pct = min(user['credits']/limit, 1.0) if limit > 0 else 1.0
@@ -317,7 +569,7 @@ if menu == "Admin":
             column_config={
                 "username": st.column_config.TextColumn("Usuário", disabled=True),
                 "credits": st.column_config.NumberColumn("Usados", disabled=True),
-                "plan": st.column_config.SelectboxColumn("Plano", options=['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited'], required=True)
+                "plan": st.column_config.SelectboxColumn("Plano", options=['Teste Grátis', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'Ilimitado'], required=True)
             },
             hide_index=True, use_container_width=True, key="users_editor"
         )
@@ -342,7 +594,7 @@ if menu == "Admin":
             if sel_user:
                 with st.form("edit_cred"):
                     nc = st.number_input("Definir 'Créditos Usados':", min_value=0, value=int(u_info['credits']))
-                    np = st.selectbox("Plano:", ['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited'], index=['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited'].index(u_info['plan']))
+                    np = st.selectbox("Plano:", ['Teste Grátis', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'Ilimitado'], index=['Teste Grátis', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'Ilimitado'].index(u_info['plan']))
                     if st.form_submit_button("✅ Atualizar"):
                         db.admin_set_credits_used(sel_user, nc)
                         db.admin_update_plan(sel_user, np)
@@ -384,18 +636,42 @@ if menu == "Admin":
 elif menu == "📂 Documentos da Empresa":
     st.title("📂 Acervo Digital")
     st.info("Estes documentos serão usados para o Cruzamento Automático.")
+    
     with st.expander("⬆️ Upload", expanded=False):
         c1, c2 = st.columns(2)
         s = c1.selectbox("Pasta", list(DOC_STRUCTURE.keys()))
         t = c2.selectbox("Tipo", DOC_STRUCTURE[s])
-        f = st.file_uploader("Arquivo PDF", type=["pdf"])
-        if f and st.button("Salvar na Nuvem"):
-            with st.spinner("Enviando..."):
-                safe = re.sub(r'[\\/*?:"<>|]', "", f.name)
-                if db.upload_file_to_storage(f.getvalue(), safe, user['username'], s, t):
-                    st.success("Salvo!"); time.sleep(1); st.rerun()
-                else: st.error("Erro upload.")
-    
+        
+        # --- LÓGICA DE LIMPEZA DO UPLOADER ---
+        # Inicializa um contador na sessão para controlar o reset do uploader
+        if "uploader_key" not in st.session_state:
+            st.session_state["uploader_key"] = 0
+            
+        # O parâmetro 'key' dinâmico força o componente a resetar quando o número muda
+        files = st.file_uploader(
+            "Arquivos PDF", 
+            type=["pdf"], 
+            accept_multiple_files=True, 
+            key=f"uploader_{st.session_state['uploader_key']}"
+        )
+        
+        if files and st.button("Salvar na Nuvem"):
+            with st.spinner(f"Enviando {len(files)} arquivos..."):
+                count_success = 0
+                for f in files:
+                    safe = re.sub(r'[\\/*?:"<>|]', "", f.name)
+                    if db.upload_file_to_storage(f.getvalue(), safe, user['username'], s, t):
+                        count_success += 1
+                    else:
+                        st.error(f"Erro ao enviar: {f.name}")
+                
+                if count_success > 0:
+                    st.success(f"{count_success} arquivo(s) salvo(s) com sucesso!")
+                    # INCREMENTA A CHAVE PARA LIMPAR O CAMPO NO PRÓXIMO RERUN
+                    st.session_state["uploader_key"] += 1
+                    time.sleep(1)
+                    st.rerun()
+
     st.divider()
     for sec, types in DOC_STRUCTURE.items():
         st.markdown(f"**{sec}**")
@@ -404,11 +680,17 @@ elif menu == "📂 Documentos da Empresa":
             with cols[i%3]:
                 files = db.list_files_from_storage(user['username'], sec, t)
                 with st.expander(f"{t} ({len(files)})"):
-                    for file in files:
+                    # ALTERAÇÃO AQUI: Adicionamos 'idx' (índice) no loop
+                    for idx, file in enumerate(files):
                         c_tx, c_del = st.columns([0.8, 0.2])
                         c_tx.caption(file[:20]+"...")
-                        if c_del.button("🗑️", key=f"d_{file}"):
-                            db.delete_file_from_storage(file, user['username'], sec, t); st.rerun()
+                        
+                        # ALTERAÇÃO AQUI: A key agora é única combinando: seção + tipo + indice + nome
+                        unique_key = f"del_{sec}_{t}_{idx}_{file}"
+                        
+                        if c_del.button("🗑️", key=unique_key):
+                            db.delete_file_from_storage(file, user['username'], sec, t)
+                            st.rerun()
 
 # 3. ANÁLISE
 elif menu == "Análise de Editais":
@@ -425,17 +707,14 @@ elif menu == "Análise de Editais":
     if not st.session_state.analise_atual:
         if user['credits'] >= limit: st.warning("Limite atingido."); st.stop()
         
-        # [MODIFICAÇÃO] CSS para traduzir o File Uploader (Instruções + Botão "Browse files")
         st.markdown("""
             <style>
-            /* Esconde textos originais de instrução */
             [data-testid='stFileUploaderDropzoneInstructions'] > div > span {
                 display: none;
             }
             [data-testid='stFileUploaderDropzoneInstructions'] > div > small {
                 display: none;
             }
-            /* Insere texto traduzido de instrução */
             [data-testid='stFileUploaderDropzoneInstructions'] > div::after {
                 content: "Arraste e solte arquivos aqui \\A Limite 25MB por arquivo • PDF";
                 white-space: pre-wrap;
@@ -444,16 +723,14 @@ elif menu == "Análise de Editais":
                 color: rgba(49, 51, 63, 0.6);
                 font-size: 14px;
             }
-            
-            /* Tradução do Botão "Browse files" */
             [data-testid='stFileUploader'] button {
-                color: transparent !important; /* Oculta texto original */
+                color: transparent !important;
                 position: relative;
-                min-width: 180px; /* Garante tamanho para o texto em PT */
+                min-width: 180px;
             }
             [data-testid='stFileUploader'] button::after {
                 content: "Procurar arquivos";
-                color: rgb(49, 51, 63); /* Cor original do texto */
+                color: rgb(49, 51, 63);
                 font-size: 14px;
                 position: absolute;
                 left: 0;
@@ -461,8 +738,8 @@ elif menu == "Análise de Editais":
                 width: 100%;
                 height: 100%;
                 display: flex;
-                align-items: center;    /* Sintaxe corrigida para centralizar verticalmente */
-                justify-content: center; /* Sintaxe corrigida para centralizar horizontalmente */
+                align-items: center;
+                justify-content: center;
                 pointer-events: none;
             }
             </style>
@@ -470,7 +747,6 @@ elif menu == "Análise de Editais":
 
         ups = st.file_uploader("Upload Edital + Anexos", type=["pdf"], accept_multiple_files=True)
         
-        # [MODIFICAÇÃO] Validação de Tamanho (25MB)
         valid_files = []
         if ups:
             for up in ups:
@@ -494,10 +770,9 @@ elif menu == "Análise de Editais":
                         files_ai.append(genai.upload_file(tmp_path, display_name=up.name))
                     st.session_state.gemini_files_handles = files_ai
                     
-                    status.write("Gerando Relatório Detalhado (14 Pontos)...")
+                    status.write("Gerando Relatório Detalhado...")
                     model = genai.GenerativeModel('gemini-pro-latest')
                     
-                    # PROMPT
                     prompt = """
                     ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA.
                     Analise TODOS os documentos fornecidos (Edital e Anexos) com extremo rigor.
@@ -507,7 +782,7 @@ elif menu == "Análise de Editais":
                     2. Qual o objeto do edital? (Resumo completo)
                     3. Qual o valor estimado para a realização dos serviços?
                     4. Qual a plataforma onde será realizado o certame?
-                    5. DATA_CHAVE: [DD/MM/YYYY] - Qual a data de realização do certame? (Inicie sua resposta EXATAMENTE com "DATA_CHAVE: DD/MM/YYYY". Se não houver sessão física, coloque a data limite de propostas neste formato).
+                    5. Qual a data de realização do certame? (Inicie sua resposta EXATAMENTE com "DATA_CHAVE: DD/MM/YYYY". Se não houver sessão física, coloque a data limite de propostas neste formato).
                     6. **CRONOGRAMA**: Datas e Prazos.
                     7. **HABILITAÇÃO JURÍDICA/FISCAL**: Exigências.
                     8. **FINANCEIRO**: Índices (LG, SG, LC) e valores.
@@ -548,21 +823,80 @@ elif menu == "Análise de Editais":
         if user['plan'] == 'free': st.info("🔒 Upgrade necessário.")
         else:
             if st.button("Verificar Minha Viabilidade"):
-                with st.spinner("Comparando documentos..."):
+                with st.spinner("Enviando documentos da empresa para a IA (Leitura Nativa/Visual)..."):
+                    # 1. Baixar arquivos da Empresa do Storage para memória
                     c_files = db.get_all_company_files_as_bytes(user['username'])
-                    if not c_files: st.warning("Sem docs da empresa.")
+                    
+                    if not c_files: 
+                        st.warning("Sem documentos na pasta da empresa.")
                     else:
-                        temps = []
-                        for n, d in c_files:
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as t:
-                                t.write(d); tp = t.name
-                            temps.append(genai.upload_file(tp, display_name=n)); os.remove(tp)
+                        local_paths = []
+                        company_ai_files = []
                         
-                        prompt = "Checklist de Viabilidade: Edital vs Empresa. Para cada item: Edital pede X -> Empresa tem Y -> Veredito."
-                        model = genai.GenerativeModel('gemini-pro-latest')
-                        resp = model.generate_content(st.session_state.gemini_files_handles + temps + [prompt])
-                        st.session_state.analise_atual += "\n\n---\n\n# 🛡️ VIABILIDADE\n" + resp.text
-                        st.rerun()
+                        try:
+                            # 2. Upload dos arquivos da Empresa para o Gemini
+                            # Isso permite que a IA leia pixels/imagens (OCR Nativo)
+                            for n, d in c_files:
+                                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as t:
+                                    t.write(d)
+                                    local_paths.append(t.name)
+                                
+                                # Upload explícito para a IA
+                                ai_file = genai.upload_file(t.name, display_name=n)
+                                company_ai_files.append(ai_file)
+                            
+                            # 3. Preparar Prompt + Arquivos do Edital + Arquivos da Empresa
+                            all_files = st.session_state.gemini_files_handles + company_ai_files
+                            
+                            # ALTERAÇÃO: Instruções para separar Operacional de Profissional
+                            prompt_cross = """
+                            ATUE COMO AUDITOR SÊNIOR E ESPECIALISTA EM ANÁLISE DOCUMENTAL DE ENGENHARIA.
+                            
+                            CONTEXTO:
+                            Você possui acesso aos arquivos do EDITAL (primeiros arquivos) e aos arquivos da EMPRESA (últimos arquivos carregados).
+                            Utilize visão computacional para ler documentos digitalizados/imagens.
+                            
+                            DIRETRIZES GERAIS:
+                            1. LEITURA EXAUSTIVA: Analise TODOS os documentos fornecidos.
+                            2. FLEXIBILIDADE TÉCNICA: Aceite serviços similares/correlatos (não exija literalidade).
+                            
+                            ESTRUTURA DA RESPOSTA OBRIGATÓRIA (Siga esta ordem):
+                            
+                            1. **HABILITAÇÃO JURÍDICA E FISCAL**
+                               - Analise os itens solicitados vs documentos apresentados.
+                            
+                            2. **QUALIFICAÇÃO TÉCNICA OPERACIONAL (EMPRESA)**
+                               - Identifique o nome da empresa.
+                               - Foco: Atestados emitidos em nome da PESSOA JURÍDICA (Empresa).
+                               - Liste cada exigência de capacidade da empresa.
+                               - Documento Encontrado: Cite o atestado da empresa que atende (lembrando da similaridade técnica).
+                               - Status: ✅ APTO / ⚠️ / ❌
+                            
+                            3. **QUALIFICAÇÃO TÉCNICA PROFISSIONAL (EQUIPE TÉCNICA)**
+                               - Foco: CATs (Certidões de Acervo Técnico) e Atestados em nome da PESSOA FÍSICA (Engenheiro/Arquiteto).
+                               - Liste as exigências para o Responsável Técnico.
+                               - Documento Encontrado: Cite a CAT/Atestado do profissional que atende.
+                               - Status: ✅ APTO / ⚠️ / ❌
+                            
+                            4. **HABILITAÇÃO FINANCEIRA**
+                               - Analise Balanço, Índices e Garantias.
+                            
+                            5. **PARECER FINAL DE VIABILIDADE**
+                            """
+                            
+                            model = genai.GenerativeModel('gemini-pro-latest')
+                            resp = model.generate_content(all_files + [prompt_cross])
+                            
+                            # 4. Exibir resultado
+                            st.session_state.analise_atual += "\n\n---\n\n# 🛡️ VIABILIDADE (Análise IA Visual)\n" + resp.text
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Erro no processamento IA: {e}")
+                        finally:
+                            # Limpeza dos arquivos temporários locais
+                            for p in local_paths:
+                                if os.path.exists(p): os.remove(p)
         
         st.divider()
         st.subheader("💬 Chat")
@@ -597,22 +931,185 @@ elif menu == "Análise de Editais":
 elif menu == "📜 Histórico":
     st.title("Biblioteca de Análises")
     lst = db.get_user_history_list(user['username'])
-    if not lst: st.info("Vazio.")
+    
+    if not lst: 
+        st.info("Vazio.")
+    else:
+        # --- EXCLUSÃO EM MASSA (MANTIDO) ---
+        with st.expander("🗑️ Gerenciar / Excluir Vários"):
+            st.caption("Selecione os itens que deseja excluir permanentemente e clique no botão abaixo.")
+            
+            table_data = []
+            for item in lst:
+                raw_t = extract_title(item['content'])
+                d_str = item['created_at'].strftime("%d/%m/%Y")
+                table_data.append({"id": item['id'], "Excluir": False, "Data": d_str, "Título": raw_t})
+            
+            df_hist = pd.DataFrame(table_data)
+            edited_df = st.data_editor(
+                df_hist,
+                column_config={
+                    "id": None, 
+                    "Excluir": st.column_config.CheckboxColumn("Selecionar", default=False, width="small"),
+                    "Data": st.column_config.TextColumn("Data", disabled=True, width="small"),
+                    "Título": st.column_config.TextColumn("Edital", disabled=True, width="large")
+                },
+                hide_index=True, use_container_width=True, key="editor_mass_delete"
+            )
+            
+            if st.button("🗑️ Excluir Selecionados", type="primary"):
+                selected_rows = edited_df[edited_df["Excluir"] == True]
+                if not selected_rows.empty:
+                    count_del = 0
+                    with st.spinner("Excluindo itens..."):
+                        for index, row in selected_rows.iterrows():
+                            if db.delete_history_item(user['username'], row['id']): count_del += 1
+                    if count_del > 0:
+                        st.success(f"{count_del} análises excluídas!"); time.sleep(1); st.rerun()
+                else: st.warning("Nenhum item selecionado.")
+        
+        st.divider()
+
+    # --- LISTAGEM COM EXTRAÇÃO APRIMORADA DO OBJETO ---
     for item in lst:
         chat_key = f"hist_chat_{item['id']}"
         if chat_key not in st.session_state: st.session_state[chat_key] = []
-        dt = item['created_at'].strftime("%d/%m/%Y")
         
-        raw_title = extract_title(item['content'])
+        # 1. Extração de Dados
+        dt_consulta = item['created_at'].strftime("%d/%m/%Y")
+        content_txt = item['content']
+        
+        # Extrair Órgão Licitante (Busca texto entre "1." e "2.")
+        orgao = "Órgão Indefinido"
+        try:
+            # Tenta pegar tudo entre "1." e "2."
+            if "1." in content_txt and "2." in content_txt:
+                part_org = content_txt.split("1.")[1].split("2.")[0]
+                # Limpa supostos cabeçalhos da pergunta
+                part_org = part_org.replace("Qual o nome do órgão contratante?", "").replace("Nome do órgão", "").strip()
+                orgao = part_org.replace("*", "").replace("#", "").strip()[:60]
+        except:
+            pass # Mantém Indefinido se falhar
+        
+        # Extrair Objeto do Edital (Busca texto entre "2." e "3." - TÉCNICA MAIS ROBUSTA)
+        objeto_edital = "Objeto Indefinido"
+        try:
+            if "2." in content_txt and "3." in content_txt:
+                # Corta o texto exatamente onde começa a resposta 2 e termina antes da 3
+                raw_chunk = content_txt.split("2.")[1].split("3.")[0]
+                
+                # Lista de "Lixos" que a IA costuma repetir e precisamos remover
+                garbage = [
+                    "Qual o objeto do edital?", 
+                    "(Resumo completo)", 
+                    "Objeto:", 
+                    "**", 
+                    "##",
+                    "Resumo:",
+                    "Trata-se de"
+                ]
+                
+                clean_chunk = raw_chunk
+                for g in garbage:
+                    clean_chunk = clean_chunk.replace(g, "")
+                
+                # Remove pontuação inicial (ex: ": A contratação...") e espaços
+                clean_chunk = clean_chunk.strip().lstrip(":- ").strip()
+                
+                # Pega os primeiros 150 caracteres para o título
+                if len(clean_chunk) > 3:
+                    objeto_edital = (clean_chunk[:150] + '...') if len(clean_chunk) > 150 else clean_chunk
+        except:
+            # Fallback se a numeração falhar
+            match_obj = re.search(r"objeto.*?[:\-\?]\s*(.*?)(?:\n|$)", content_txt, re.IGNORECASE)
+            if match_obj: objeto_edital = match_obj.group(1)[:50]
+
+        # Extrair Data Sessão
+        match_sessao = re.search(r"DATA_CHAVE:\s*(\d{2}/\d{2}/\d{4})", content_txt)
+        dt_sessao = match_sessao.group(1) if match_sessao else "Data Pendente"
+
+        # TÍTULO FORMATADO
+        full_display_title = f"{dt_consulta} | Edital | {orgao} | {objeto_edital} | {dt_sessao}"
+        
+        # Aplicação de Cores baseada no Status
         status = item.get('status')
+        if status == 'red': full_display_title = f":red[{full_display_title}]"
+        elif status == 'yellow': full_display_title = f":orange[{full_display_title}]"
+        elif status == 'green': full_display_title = f"**:green[{full_display_title}]**"
         
-        display_title = raw_title
-        if status == 'red': display_title = f":red[{raw_title}]"
-        elif status == 'yellow': display_title = f":orange[{raw_title}]"
-        elif status == 'green': display_title = f"**:green[{raw_title}]**"
-        
-        with st.expander(f"📅 {dt} | {display_title}"):
+        with st.expander(full_display_title):
             render_status_controls(item['id'], status, item.get('note', ''))
+            
+            # --- CRUZAMENTO DE DADOS NO HISTÓRICO ---
+            st.info("🧠 Inteligência Artificial")
+            col_ia_btn, col_ia_info = st.columns([0.4, 0.6])
+            
+            with col_ia_btn:
+                has_viability = "🛡️ VIABILIDADE" in content_txt
+                btn_label = "🔄 Refazer Cruzamento (Viabilidade)" if has_viability else "🚀 Cruzar Dados (Edital x Empresa)"
+                
+                if st.button(btn_label, key=f"via_{item['id']}"):
+                    if user['plan'] == 'free':
+                        st.warning("Recurso exclusivo para assinantes.")
+                    else:
+                        with st.spinner("Baixando documentos e analisando compatibilidade..."):
+                            # 1. Baixar Docs da Empresa
+                            c_files = db.get_all_company_files_as_bytes(user['username'])
+                            if not c_files:
+                                st.error("Você não tem documentos na pasta da empresa.")
+                            else:
+                                try:
+                                    temps = []
+                                    gemini_files = []
+                                    # Upload para IA (Leitura Nativa/Visual)
+                                    for n, d in c_files:
+                                        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as t:
+                                            t.write(d); tp = t.name
+                                        temps.append(tp)
+                                        gemini_files.append(genai.upload_file(tp, display_name=n))
+                                    
+                                    # Prompt com Separação Técnica
+                                    prompt_hist = f"""
+                                    ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA. 
+                                    Compare os documentos anexados da empresa com o seguinte resumo de edital:
+                                    
+                                    --- INÍCIO RESUMO EDITAL ---
+                                    {content_txt}
+                                    --- FIM RESUMO EDITAL ---
+                                    
+                                    DIRETRIZES:
+                                    1. Analise TODOS os documentos.
+                                    2. Aplique FLEXIBILIDADE TÉCNICA (serviços similares são aceitos).
+                                    
+                                    TAREFA: Gere um Checklist de Viabilidade separado nas seguintes categorias OBRIGATÓRIAS:
+                                    
+                                    A) QUALIFICAÇÃO TÉCNICA OPERACIONAL (EMPRESA)
+                                    - Verifique se a EMPRESA (PJ) possui os atestados exigidos.
+                                    - Item do Edital -> Documento da Empresa -> Veredito.
+                                    
+                                    B) QUALIFICAÇÃO TÉCNICA PROFISSIONAL (EQUIPE)
+                                    - Verifique se o PROFISSIONAL (PF) possui as CATs/Atestados exigidos.
+                                    - Item do Edital -> Documento do Profissional -> Veredito.
+                                    
+                                    C) DEMAIS HABILITAÇÕES (Jurídica, Fiscal, Financeira)
+                                    - Verifique as demais exigências.
+                                    """
+                                    model = genai.GenerativeModel('gemini-pro-latest')
+                                    resp = model.generate_content(gemini_files + [prompt_hist])
+                                    
+                                    # Atualizar no Banco
+                                    new_content = content_txt + "\n\n---\n\n# 🛡️ VIABILIDADE (Gerada via Histórico)\n" + resp.text
+                                    db.db.collection('users').document(user['username']).collection('history').document(item['id']).update({
+                                        'content': new_content
+                                    })
+                                    
+                                    for tp in temps: os.remove(tp)
+                                    st.success("Análise de viabilidade adicionada ao registro!")
+                                    time.sleep(1.5); st.rerun()
+                                    
+                                except Exception as e:
+                                    st.error(f"Erro na análise IA: {e}")
+
             st.divider()
             
             st.markdown(item['content'])
@@ -629,17 +1126,17 @@ elif menu == "📜 Histórico":
             st.subheader("💬 Dúvidas (Histórico)")
             for r, t in st.session_state[chat_key]:
                 with st.chat_message(r): st.markdown(t)
-            if q := st.chat_input("Pergunta...", key=f"in_{item['id']}"):
+            if q := st.chat_input("Pergunta sobre este edital...", key=f"in_{item['id']}"):
                 st.session_state[chat_key].append(("user", q))
                 with st.chat_message("user"): st.markdown(q)
                 with st.chat_message("assistant"):
                     with st.spinner("..."):
                         try:
                             m = genai.GenerativeModel('gemini-pro-latest')
-                            res = m.generate_content(f"Contexto: {item['content']}\nPergunta: {q}")
+                            res = m.generate_content(f"Contexto do Edital: {item['content']}\nPergunta do Usuário: {q}")
                             st.markdown(res.text)
                             st.session_state[chat_key].append(("assistant", res.text))
-                        except: st.error("Erro.")
+                        except: st.error("Erro na resposta IA.")
 
 # 5. CALENDÁRIO
 elif menu == "📅 Calendário":
@@ -656,12 +1153,10 @@ elif menu == "📅 Calendário":
             date_iso = extract_date_for_calendar(full_title)
             
             if date_iso:
-                # 1. Extrai Órgão do Conteúdo (Localmente para exibição)
                 orgao_cal = "Órgão"
                 match_org = re.search(r"(?:1\.|órgão).*?[:\-\?]\s*(.*?)(?:\n|2\.|Qual|$)", item['content'], re.IGNORECASE)
                 if match_org: orgao_cal = match_org.group(1).replace("*", "").strip()[:30]
 
-                # 2. Extrai Palavra-Chave do Objeto (3 primeiras palavras)
                 obj_cal = "Geral"
                 match_obj = re.search(r"(?:2\.|objeto).*?[:\-\?]\s*(.*?)(?:\n|3\.|Qual|$)", item['content'], re.IGNORECASE | re.DOTALL)
                 if match_obj:
@@ -669,7 +1164,6 @@ elif menu == "📅 Calendário":
                     raw_o = re.sub(r'[^\w\s]', '', raw_o)
                     obj_cal = " ".join(raw_o.split()[:3])
                 
-                # Título Formatado para o Evento
                 title_for_event = f"{orgao_cal} - {obj_cal}"
 
                 events.append({
@@ -702,7 +1196,6 @@ elif menu == "📅 Calendário":
     if cal_state.get("eventClick"):
         clicked_event = cal_state["eventClick"]["event"]
         
-        # Recupera dados
         title_clk = clicked_event.get("title", "Sem título")
         props = clicked_event.get("extendedProps", {})
         content_view = props.get("content", "")
@@ -710,7 +1203,6 @@ elif menu == "📅 Calendário":
         st.divider()
         st.subheader(f"📌 {title_clk}")
         
-        # LINK PARA ANÁLISE COMPLETA (EXPANDER)
         with st.expander("📄 Ver Análise Completa (Clique para expandir)"):
             st.markdown(content_view)
             st.divider()

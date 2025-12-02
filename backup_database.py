@@ -10,7 +10,8 @@ from email.mime.multipart import MIMEMultipart
 from email.utils import formataddr 
 import re
 import pandas as pd
-
+import string # <--- NOVA IMPORTAÇÃO
+import random
 
 # --- CONFIGURAÇÃO ---
 # ⚠️ SUBSTITUA PELO SEU ID REAL DO FIREBASE STORAGE (sem gs://)
@@ -123,6 +124,48 @@ def check_session_valid(username, current_token):
 def get_user_by_username(username):
     success, data = login_user(username, "ignorar_senha_aqui")
     return data if success else None
+
+def recover_user_password(email):
+    """Gera senha temporária e envia por e-mail."""
+    try:
+        # 1. Encontrar usuário pelo email
+        users_ref = db.collection('users')
+        query = users_ref.where('email', '==', email).stream()
+        found_user = None
+        user_doc_id = None
+        
+        for u in query:
+            found_user = u.to_dict()
+            user_doc_id = u.id
+            break
+            
+        if not found_user:
+            return False, "E-mail não encontrado na base de dados."
+            
+        # 2. Gerar senha temporária (6 caracteres alfanuméricos)
+        chars = string.ascii_letters + string.digits
+        temp_pass = ''.join(random.choice(chars) for _ in range(6))
+        
+        # 3. Atualizar senha no banco
+        hashed = bcrypt.hashpw(temp_pass.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        users_ref.document(user_doc_id).update({'password_hash': hashed})
+        
+        # 4. Enviar E-mail
+        html_body = f"""
+        <h2>🔐 Recuperação de Senha - Urbano</h2>
+        <p>Olá, {found_user.get('name', 'Usuário')}.</p>
+        <p>Sua senha temporária é: <b style="font-size: 18px; color: #003366;">{temp_pass}</b></p>
+        <p>Por favor, faça login e altere sua senha se desejar (contate o suporte).</p>
+        """
+        ok, msg = send_email(email, "Sua Nova Senha Temporária", html_body)
+        
+        if ok:
+            return True, "Senha temporária enviada para o seu e-mail!"
+        else:
+            return False, f"Erro ao enviar e-mail: {msg}"
+            
+    except Exception as e:
+        return False, str(e)
 
 # --- SISTEMA DE CRÉDITOS ---
 

@@ -10,11 +10,10 @@ from email.mime.multipart import MIMEMultipart
 from email.utils import formataddr 
 import re
 import pandas as pd
-import string # <--- NOVA IMPORTAÇÃO
+import string 
 import random
 
 # --- CONFIGURAÇÃO ---
-# ⚠️ SUBSTITUA PELO SEU ID REAL DO FIREBASE STORAGE (sem gs://)
 BUCKET_NAME = "urbano-licita.firebasestorage.app" 
 
 # --- CONEXÃO COM O FIREBASE (SINGLETON) ---
@@ -55,6 +54,8 @@ def init_db():
                 'username': 'admin',
                 'name': 'Administrador Urbano',
                 'email': 'admin@urbano.com',
+                'company_name': 'Urbano Sede',
+                'cnpj': '00.000.000/0001-00',
                 'password_hash': hashed,
                 'role': 'admin',
                 'plan_type': 'unlimited',
@@ -65,7 +66,8 @@ def init_db():
     except Exception as e:
         print(f"Erro init DB: {e}")
 
-def register_user(username, name, email, password):
+# ATUALIZADO: Adicionados company_name e cnpj
+def register_user(username, name, email, password, company_name, cnpj):
     try:
         users_ref = db.collection('users')
         if users_ref.document(username).get().exists:
@@ -76,6 +78,8 @@ def register_user(username, name, email, password):
             'username': username,
             'name': name,
             'email': email,
+            'company_name': company_name, # Novo Campo
+            'cnpj': cnpj,                 # Novo Campo
             'password_hash': hashed,
             'role': 'user',
             'plan_type': 'free',
@@ -87,6 +91,7 @@ def register_user(username, name, email, password):
     except Exception as e:
         return False, str(e)
 
+# ATUALIZADO: Retorna company_name e cnpj no dicionário
 def login_user(username, password):
     try:
         doc = db.collection('users').document(username).get()
@@ -107,6 +112,9 @@ def login_user(username, password):
                 return True, {
                     "username": username,
                     "name": d.get('name'),
+                    "email": d.get('email'),
+                    "company_name": d.get('company_name', ''), # Retorno Atualizado
+                    "cnpj": d.get('cnpj', ''),                 # Retorno Atualizado
                     "role": d.get('role', 'user'),
                     "plan_type": d.get('plan_type', 'free'),
                     "credits_used": d.get('credits_used', 0),
@@ -128,7 +136,6 @@ def get_user_by_username(username):
 def recover_user_password(email):
     """Gera senha temporária e envia por e-mail."""
     try:
-        # 1. Encontrar usuário pelo email
         users_ref = db.collection('users')
         query = users_ref.where('email', '==', email).stream()
         found_user = None
@@ -142,15 +149,12 @@ def recover_user_password(email):
         if not found_user:
             return False, "E-mail não encontrado na base de dados."
             
-        # 2. Gerar senha temporária (6 caracteres alfanuméricos)
         chars = string.ascii_letters + string.digits
         temp_pass = ''.join(random.choice(chars) for _ in range(6))
         
-        # 3. Atualizar senha no banco
         hashed = bcrypt.hashpw(temp_pass.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         users_ref.document(user_doc_id).update({'password_hash': hashed})
         
-        # 4. Enviar E-mail
         html_body = f"""
         <h2>🔐 Recuperação de Senha - Urbano</h2>
         <p>Olá, {found_user.get('name', 'Usuário')}.</p>
@@ -207,7 +211,6 @@ def delete_file_from_storage(filename, user_folder, section, sub_item):
     except: return False
 
 def get_all_company_files_as_bytes(username):
-    """Baixa arquivos da empresa para memória (para o cruzamento)."""
     files_data = []
     try:
         blobs = bucket.list_blobs(prefix=f"{username}/")
@@ -219,23 +222,21 @@ def get_all_company_files_as_bytes(username):
         return files_data
     except: return []
 
-# --- HISTÓRICO E STATUS (ATUALIZADO) ---
+# --- HISTÓRICO E STATUS ---
 
 def save_analysis_history(username, title, full_text):
-    """Salva e retorna o ID do documento criado."""
     try:
         _, doc_ref = db.collection('users').document(username).collection('history').add({
             'title': title, 
             'content': full_text, 
             'created_at': datetime.datetime.now(),
-            'status': None, # red, yellow, green
-            'note': ''      # Observação do cliente
+            'status': None, 
+            'note': ''      
         })
         return doc_ref.id
     except: return None
 
 def update_analysis_status(username, doc_id, status, note):
-    """Atualiza a cor e observação de um edital."""
     try:
         db.collection('users').document(username).collection('history').document(doc_id).update({
             'status': status,
@@ -252,7 +253,6 @@ def get_user_history_list(username):
     except: return []
 
 def get_history_item(username, doc_id):
-    """Busca um item específico do histórico pelo ID (Correção do Loop)."""
     try:
         doc = db.collection('users').document(username).collection('history').document(doc_id).get()
         if doc.exists:
@@ -277,6 +277,7 @@ def admin_get_users_stats():
             data.append({
                 'username': d['username'],
                 'name': d['name'],
+                'company_name': d.get('company_name', '-'),
                 'email': d.get('email', '-'),
                 'plan': d.get('plan_type', 'free'),
                 'credits': d.get('credits_used', 0),
@@ -299,18 +300,9 @@ def admin_set_credits_used(username, new_amount):
         return True
     except: return False
 
-    
-# --- SISTEMA DE NOTIFICAÇÃO E E-MAIL (ATUALIZADO - RESUMO DIÁRIO) ---
-
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-import re
-import pandas as pd
-import datetime
+# --- SISTEMA DE NOTIFICAÇÃO ---
 
 def send_email(to_email, subject, body_html):
-    """Envia um e-mail genérico usando as configurações do secrets."""
     try:
         smtp_server = st.secrets["EMAIL"]["SMTP_SERVER"]
         smtp_port = st.secrets["EMAIL"]["SMTP_PORT"]
@@ -318,10 +310,7 @@ def send_email(to_email, subject, body_html):
         sender_password = st.secrets["EMAIL"]["EMAIL_PASSWORD"]
 
         msg = MIMEMultipart()
-        
-        # ATUALIZAÇÃO: Uso de formataddr para "Nome <email>" sem erro 553
         msg['From'] = formataddr(("Urbano Soluções Integradas", sender_email))
-        
         msg['To'] = to_email
         msg['Subject'] = subject
 
@@ -338,30 +327,21 @@ def send_email(to_email, subject, body_html):
 def count_business_days_left(start_date, end_date):
     if start_date >= end_date: return 0
     try:
-        # Freq='B' força dias úteis.
         bdays = pd.bdate_range(start=start_date, end=end_date, freq='B')
-        # Subtrai 1 pois o range é inclusivo
         return len(bdays) - 1
     except: return 999
 
 def extract_details_from_text(full_text):
-    """Tenta pescar Plataforma e Horário do texto do edital."""
     details = {
         "plataforma": "Verificar no Edital",
         "hora": "09:00 (Estimar)"
     }
-    
-    # Tenta achar plataforma
     match_plat = re.search(r"(?:plataforma|portal|sítio eletrônico|endereço eletrônico).*?[:\-\?]\s*(.*?)(?:\n|\.|,)", full_text, re.IGNORECASE)
     if match_plat:
-        clean = match_plat.group(1).strip()[:50] # Limita caracteres
-        
-        # Limpeza de prefixos de URL
+        clean = match_plat.group(1).strip()[:50] 
         clean = clean.replace("https://", "").replace("http://", "").replace("www.", "").rstrip("/")
-        
         if len(clean) > 3: details["plataforma"] = clean
         
-    # Tenta achar horário (padrão HH:MM ou HHhMM)
     match_hora = re.search(r"(\d{2}[:h]\d{2})", full_text)
     if match_hora:
         details["hora"] = match_hora.group(1).replace('h', ':')
@@ -369,18 +349,11 @@ def extract_details_from_text(full_text):
     return details
 
 def check_deadlines_and_notify():
-    """
-    Gera um RESUMO agrupado por usuário com todos os editais próximos.
-    Roda às 08h e 16h (definido no GitHub Actions).
-    """
     logs = []
     users_ref = db.collection('users').stream()
-    
-    # Ajuste de Fuso Horário Manual (UTC-3 para garantir data do Brasil)
     now_br = datetime.datetime.now() - datetime.timedelta(hours=3)
     today = now_br.date()
     
-    # 1. VARRER USUÁRIOS
     for u in users_ref:
         user_data = u.to_dict()
         email = user_data.get('email')
@@ -389,11 +362,9 @@ def check_deadlines_and_notify():
         
         if not email: continue
         
-        # Lista para armazenar os editais deste usuário
         pending_bids = []
         found_greens = 0
         
-        # Busca histórico VERDE (Apto)
         docs = db.collection('users').document(username).collection('history').where('status', '==', 'green').stream()
         
         for doc in docs:
@@ -403,7 +374,6 @@ def check_deadlines_and_notify():
                 title = data.get('title', 'Sem Título')
                 full_content = data.get('content', '')
                 
-                # Extrai Data (Procura padrão DD/MM/YYYY em qualquer lugar do título)
                 match_date = re.search(r"(\d{2})/(\d{2})/(\d{4})", title)
                 if match_date:
                     event_date_str = f"{match_date.group(3)}-{match_date.group(2)}-{match_date.group(1)}"
@@ -411,10 +381,7 @@ def check_deadlines_and_notify():
                     
                     bdays_left = count_business_days_left(today, event_date)
                     
-                    # CRITÉRIO: Entre 0 e 2 dias úteis restantes
                     if 0 <= bdays_left <= 2:
-                        
-                        # Tenta extrair Órgão/Objeto do pipe, senão usa título todo
                         parts = title.split('|')
                         orgao = parts[0].replace("Edital", "").strip() if len(parts) > 1 else title[:30]
                         objeto = parts[1].strip() if len(parts) > 1 else "Ver Detalhes"
@@ -433,18 +400,13 @@ def check_deadlines_and_notify():
                 print(f"Erro item {doc.id}: {e_item}")
                 continue
         
-        # 2. SE HOUVER EDITAIS, ENVIA 1 E-MAIL AGREGADO
         if pending_bids:
-            # Ordena por data (mais urgente primeiro)
             pending_bids.sort(key=lambda x: x['dias_restantes'])
-            
-            # Monta linhas da tabela HTML
             rows_html = ""
             for bid in pending_bids:
-                color = "#d4edda" if bid['dias_restantes'] <= 1 else "#fff3cd" # Verde se urgente, Amarelo se atenção
+                color = "#d4edda" if bid['dias_restantes'] <= 1 else "#fff3cd" 
                 msg_prazo = "🚨 É AMANHÃ/HOJE!" if bid['dias_restantes'] <= 1 else "⏳ 2 dias úteis"
                 
-                # ATUALIZADO: Coluna 'Plataforma' removida, 'Objeto' adicionado no lugar, 'Órgão' limpo.
                 rows_html += f"""
                 <tr style="background-color: {color}; border-bottom: 1px solid #ddd;">
                     <td style="padding: 10px;"><b>{bid['orgao']}</b></td>
@@ -454,7 +416,6 @@ def check_deadlines_and_notify():
                 </tr>
                 """
 
-            # Monta Corpo do E-mail
             email_body = f"""
             <html>
             <body style="font-family: Arial, sans-serif; color: #333;">
@@ -493,7 +454,6 @@ def check_deadlines_and_notify():
             </html>
             """
             
-            # Dispara
             subject = f"📅 Resumo de Licitações: {len(pending_bids)} oportunidades próximas"
             ok, msg = send_email(email, subject, email_body)
             

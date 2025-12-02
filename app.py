@@ -171,7 +171,6 @@ if 'user' not in st.session_state:
 # Lógica de Recuperação de Sessão
 if st.session_state.user is None:
     # Pequeno delay para garantir que o navegador enviou o cookie
-    # Agora que o CORS/XSRF está desligado no config.toml, isso vai funcionar.
     time.sleep(0.3)
     
     auth_cookie = cookie_manager.get("urbano_auth")
@@ -188,7 +187,9 @@ if st.session_state.user is None:
                         "role": raw.get('role'), 
                         "plan": raw.get('plan_type', 'free'),
                         "credits": raw.get('credits_used', 0), 
-                        "token": raw.get('token')
+                        "token": raw.get('token'),
+                        "company_name": raw.get('company_name', ''), # Carrega Empresa
+                        "cnpj": raw.get('cnpj', '')                  # Carrega CNPJ
                     }
                     st.rerun()
         except:
@@ -238,7 +239,6 @@ if not st.session_state.user:
             font-size: 13px;
         }
         
-        /* ALTERAÇÃO AQUI: Cor do texto mudada para #364C50 */
         div[data-testid="stTextInput"] input, div[data-testid="stNumberInput"] input {
             background-color: transparent !important;
             color: #364C50 !important; 
@@ -254,12 +254,10 @@ if not st.session_state.user:
             box-shadow: none !important;
         }
 
-        /* NOVA REGRA: Remove o texto "Press Enter to Submit Form" */
         [data-testid="InputInstructions"] {
             display: none !important;
         }
 
-        /* Botões Gerais do Formulário */
         div.stButton > button {
             font-family: 'Poppins', sans-serif;
             font-size: 16px;
@@ -284,7 +282,6 @@ if not st.session_state.user:
             color: #fff !important;
         }
 
-        /* --- ESTILO DAS ABAS (Cor #364C50 Opaca) --- */
         .stTabs [data-baseweb="tab-list"] {
             gap: 10px;
             justify-content: center;
@@ -313,7 +310,6 @@ if not st.session_state.user:
             background-color: transparent; 
         }
 
-        /* 2. Botão Recuperar Senha (#babac2) */
         [data-testid="stForm"] [data-testid="stHorizontalBlock"] [data-testid="stColumn"]:nth-of-type(2) button {
             background-color: #babac2 !important;
             color: #fff !important;
@@ -322,7 +318,6 @@ if not st.session_state.user:
             background-color: #9a9a9f !important;
         }
 
-        /* Alerts */
         div[data-baseweb="notification"] {
             background-color: rgba(255, 255, 255, 0.9);
             border-radius: 10px;
@@ -337,12 +332,9 @@ if not st.session_state.user:
     col_spacer_l, col_login, col_spacer_r = st.columns([1, 1.5, 1])
     
     with col_login:
-        # Carrega imagem em Base64 para HTML
         img_b64 = get_base64_image("LOGO URBANO OFICIAL.png")
         img_src = f"data:image/png;base64,{img_b64}" if img_b64 else ""
 
-        # Cabeçalho Visual (Logo e Título)
-        # CONTAINER AUMENTADO (160px) COM IMAGEM FIXA (110px) PARA AUMENTAR BORDA BRANCA
         if img_src:
             html_logo = f"""
             <div style="text-align: center; margin-bottom: 30px;">
@@ -363,7 +355,6 @@ if not st.session_state.user:
             </div>
             """
         else:
-            # Fallback se a imagem não existir
             html_logo = """<div style="text-align: center; margin-bottom: 30px; font-size: 50px;">🏢</div>"""
 
         st.markdown(html_logo, unsafe_allow_html=True)
@@ -383,7 +374,6 @@ if not st.session_state.user:
                 st.markdown(f"<p style='color: white; font-size: 12px; margin-bottom: 0px; margin-top: 15px;'>Segurança: Quanto é {st.session_state.log_n1} + {st.session_state.log_n2}?</p>", unsafe_allow_html=True)
                 captcha_ans = st.number_input("Resultado Captcha", step=1, label_visibility="collapsed", key="in_cap_log")
 
-                # Layout de Botões Lado a Lado
                 c_btn_log, c_btn_rec = st.columns(2)
                 
                 with c_btn_log:
@@ -392,10 +382,9 @@ if not st.session_state.user:
                     submitted_recover = st.form_submit_button("RECUPERAR")
 
                 if submitted_recover:
-                    # Lógica de Recuperação
                     if not u or "@" not in u:
                         st.warning("Para recuperar sua senha, digite seu E-MAIL no campo 'Usuário ou E-mail' acima e clique em Recuperar novamente.")
-                        st.session_state.log_n1 = random.randint(1, 9) # Reset Captcha
+                        st.session_state.log_n1 = random.randint(1, 9) 
                     else:
                         real_ans = st.session_state.log_n1 + st.session_state.log_n2
                         if captcha_ans != real_ans:
@@ -405,10 +394,9 @@ if not st.session_state.user:
                                 ok, msg = db.recover_user_password(u)
                                 if ok: st.success(msg)
                                 else: st.error(msg)
-                                time.sleep(2) # Dar tempo de ler
+                                time.sleep(2) 
 
                 elif submitted_login:
-                    # Lógica de Login
                     real_ans = st.session_state.log_n1 + st.session_state.log_n2
                     if captcha_ans != real_ans:
                         st.error("eCaptcha incorreto.")
@@ -422,21 +410,26 @@ if not st.session_state.user:
                             st.session_state.user = {
                                 "username": d.get('username'), "name": d.get('name'),
                                 "role": d.get('role'), "plan": d.get('plan_type', 'free'),
-                                "credits": d.get('credits_used', 0), "token": d.get('token')
+                                "credits": d.get('credits_used', 0), "token": d.get('token'),
+                                "company_name": d.get('company_name', ''),
+                                "cnpj": d.get('cnpj', '')
                             }
                             cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
                             st.rerun()
                         else: st.error("Erro no login.")
         
-        # --- ABA CADASTRO ---
+        # --- ABA CADASTRO (ATUALIZADA) ---
         with t2:
             with st.form("f_cad"):
+                # Novos Campos no Início
+                nc_empresa = st.text_input("Nome da Empresa", placeholder="Razão Social")
+                nc_cnpj = st.text_input("CNPJ", placeholder="00.000.000/0000-00")
+
                 nu = st.text_input("Usuário", placeholder="Escolha um usuário")
                 nn = st.text_input("Nome", placeholder="Seu nome completo")
                 ne = st.text_input("Email", placeholder="Seu melhor e-mail")
                 np = st.text_input("Senha", type="password", placeholder="Escolha uma senha")
                 
-                # eCaptcha Cadastro
                 if 'cad_n1' not in st.session_state: st.session_state.cad_n1 = random.randint(1, 9)
                 if 'cad_n2' not in st.session_state: st.session_state.cad_n2 = random.randint(1, 9)
                 
@@ -444,7 +437,6 @@ if not st.session_state.user:
                 cad_captcha_ans = st.number_input("Resultado Captcha Cad", step=1, label_visibility="collapsed", key="in_cap_cad")
 
                 if st.form_submit_button("CADASTRAR"):
-                    # Validação Captcha
                     real_cad_ans = st.session_state.cad_n1 + st.session_state.cad_n2
                     if cad_captcha_ans != real_cad_ans:
                         st.error("eCaptcha incorreto.")
@@ -453,7 +445,8 @@ if not st.session_state.user:
                         time.sleep(1)
                         st.rerun()
                     else:
-                        ok, m = db.register_user(nu, nn, ne, np)
+                        # Chamada atualizada com empresa e cnpj
+                        ok, m = db.register_user(nu, nn, ne, np, nc_empresa, nc_cnpj)
                         if ok: st.success("Criado! Faça login."); time.sleep(1)
                         else: st.error(m)
     st.stop()
@@ -500,7 +493,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 with st.sidebar:
-    # LOGO EM CÍRCULO BRANCO (250px container / 150px logo)
+    # LOGO EM CÍRCULO BRANCO
     img_b64_side = get_base64_image("LOGO URBANO OFICIAL.png")
     if img_b64_side:
         st.markdown(f"""
@@ -521,9 +514,14 @@ with st.sidebar:
             </div>
         """, unsafe_allow_html=True)
     else:
-        # Fallback
         st.markdown("<div style='font-size: 80px; text-align: center; color: white;'>🏢</div>", unsafe_allow_html=True)
 
+    # DADOS DA EMPRESA ACIMA DA SAUDAÇÃO (ATUALIZADO)
+    if user.get('company_name'):
+        st.markdown(f"#### {user['company_name']}")
+    if user.get('cnpj'):
+        st.caption(f"CNPJ: {user['cnpj']}")
+        
     st.markdown(f"### Olá, {user['name']}")
     st.caption(f"Plano: **{user['plan'].upper()}**")
     pct = min(user['credits']/limit, 1.0) if limit > 0 else 1.0
@@ -642,12 +640,9 @@ elif menu == "📂 Documentos da Empresa":
         s = c1.selectbox("Pasta", list(DOC_STRUCTURE.keys()))
         t = c2.selectbox("Tipo", DOC_STRUCTURE[s])
         
-        # --- LÓGICA DE LIMPEZA DO UPLOADER ---
-        # Inicializa um contador na sessão para controlar o reset do uploader
         if "uploader_key" not in st.session_state:
             st.session_state["uploader_key"] = 0
             
-        # O parâmetro 'key' dinâmico força o componente a resetar quando o número muda
         files = st.file_uploader(
             "Arquivos PDF", 
             type=["pdf"], 
@@ -667,7 +662,6 @@ elif menu == "📂 Documentos da Empresa":
                 
                 if count_success > 0:
                     st.success(f"{count_success} arquivo(s) salvo(s) com sucesso!")
-                    # INCREMENTA A CHAVE PARA LIMPAR O CAMPO NO PRÓXIMO RERUN
                     st.session_state["uploader_key"] += 1
                     time.sleep(1)
                     st.rerun()
@@ -680,12 +674,10 @@ elif menu == "📂 Documentos da Empresa":
             with cols[i%3]:
                 files = db.list_files_from_storage(user['username'], sec, t)
                 with st.expander(f"{t} ({len(files)})"):
-                    # ALTERAÇÃO AQUI: Adicionamos 'idx' (índice) no loop
                     for idx, file in enumerate(files):
                         c_tx, c_del = st.columns([0.8, 0.2])
                         c_tx.caption(file[:20]+"...")
                         
-                        # ALTERAÇÃO AQUI: A key agora é única combinando: seção + tipo + indice + nome
                         unique_key = f"del_{sec}_{t}_{idx}_{file}"
                         
                         if c_del.button("🗑️", key=unique_key):
@@ -824,7 +816,6 @@ elif menu == "Análise de Editais":
         else:
             if st.button("Verificar Minha Viabilidade"):
                 with st.spinner("Enviando documentos da empresa para a IA (Leitura Nativa/Visual)..."):
-                    # 1. Baixar arquivos da Empresa do Storage para memória
                     c_files = db.get_all_company_files_as_bytes(user['username'])
                     
                     if not c_files: 
@@ -834,21 +825,16 @@ elif menu == "Análise de Editais":
                         company_ai_files = []
                         
                         try:
-                            # 2. Upload dos arquivos da Empresa para o Gemini
-                            # Isso permite que a IA leia pixels/imagens (OCR Nativo)
                             for n, d in c_files:
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as t:
                                     t.write(d)
                                     local_paths.append(t.name)
                                 
-                                # Upload explícito para a IA
                                 ai_file = genai.upload_file(t.name, display_name=n)
                                 company_ai_files.append(ai_file)
                             
-                            # 3. Preparar Prompt + Arquivos do Edital + Arquivos da Empresa
                             all_files = st.session_state.gemini_files_handles + company_ai_files
                             
-                            # ALTERAÇÃO: Instruções para separar Operacional de Profissional
                             prompt_cross = """
                             ATUE COMO AUDITOR SÊNIOR E ESPECIALISTA EM ANÁLISE DOCUMENTAL DE ENGENHARIA.
                             
@@ -886,14 +872,12 @@ elif menu == "Análise de Editais":
                             model = genai.GenerativeModel('gemini-pro-latest')
                             resp = model.generate_content(all_files + [prompt_cross])
                             
-                            # 4. Exibir resultado
                             st.session_state.analise_atual += "\n\n---\n\n# 🛡️ VIABILIDADE (Análise IA Visual)\n" + resp.text
                             st.rerun()
                             
                         except Exception as e:
                             st.error(f"Erro no processamento IA: {e}")
                         finally:
-                            # Limpeza dos arquivos temporários locais
                             for p in local_paths:
                                 if os.path.exists(p): os.remove(p)
         
@@ -934,7 +918,6 @@ elif menu == "📜 Histórico":
     if not lst: 
         st.info("Vazio.")
     else:
-        # --- EXCLUSÃO EM MASSA (MANTIDO) ---
         with st.expander("🗑️ Gerenciar / Excluir Vários"):
             st.caption("Selecione os itens que deseja excluir permanentemente e clique no botão abaixo.")
             
@@ -969,35 +952,26 @@ elif menu == "📜 Histórico":
         
         st.divider()
 
-    # --- LISTAGEM COM EXTRAÇÃO APRIMORADA DO OBJETO ---
     for item in lst:
         chat_key = f"hist_chat_{item['id']}"
         if chat_key not in st.session_state: st.session_state[chat_key] = []
         
-        # 1. Extração de Dados
         dt_consulta = item['created_at'].strftime("%d/%m/%Y")
         content_txt = item['content']
         
-        # Extrair Órgão Licitante (Busca texto entre "1." e "2.")
         orgao = "Órgão Indefinido"
         try:
-            # Tenta pegar tudo entre "1." e "2."
             if "1." in content_txt and "2." in content_txt:
                 part_org = content_txt.split("1.")[1].split("2.")[0]
-                # Limpa supostos cabeçalhos da pergunta
                 part_org = part_org.replace("Qual o nome do órgão contratante?", "").replace("Nome do órgão", "").strip()
                 orgao = part_org.replace("*", "").replace("#", "").strip()[:60]
         except:
-            pass # Mantém Indefinido se falhar
+            pass 
         
-        # Extrair Objeto do Edital (Busca texto entre "2." e "3." - TÉCNICA MAIS ROBUSTA)
         objeto_edital = "Objeto Indefinido"
         try:
             if "2." in content_txt and "3." in content_txt:
-                # Corta o texto exatamente onde começa a resposta 2 e termina antes da 3
                 raw_chunk = content_txt.split("2.")[1].split("3.")[0]
-                
-                # Lista de "Lixos" que a IA costuma repetir e precisamos remover
                 garbage = [
                     "Qual o objeto do edital?", 
                     "(Resumo completo)", 
@@ -1007,30 +981,21 @@ elif menu == "📜 Histórico":
                     "Resumo:",
                     "Trata-se de"
                 ]
-                
                 clean_chunk = raw_chunk
                 for g in garbage:
                     clean_chunk = clean_chunk.replace(g, "")
-                
-                # Remove pontuação inicial (ex: ": A contratação...") e espaços
                 clean_chunk = clean_chunk.strip().lstrip(":- ").strip()
-                
-                # Pega os primeiros 150 caracteres para o título
                 if len(clean_chunk) > 3:
                     objeto_edital = (clean_chunk[:150] + '...') if len(clean_chunk) > 150 else clean_chunk
         except:
-            # Fallback se a numeração falhar
             match_obj = re.search(r"objeto.*?[:\-\?]\s*(.*?)(?:\n|$)", content_txt, re.IGNORECASE)
             if match_obj: objeto_edital = match_obj.group(1)[:50]
 
-        # Extrair Data Sessão
         match_sessao = re.search(r"DATA_CHAVE:\s*(\d{2}/\d{2}/\d{4})", content_txt)
         dt_sessao = match_sessao.group(1) if match_sessao else "Data Pendente"
 
-        # TÍTULO FORMATADO
         full_display_title = f"{dt_consulta} | Edital | {orgao} | {objeto_edital} | {dt_sessao}"
         
-        # Aplicação de Cores baseada no Status
         status = item.get('status')
         if status == 'red': full_display_title = f":red[{full_display_title}]"
         elif status == 'yellow': full_display_title = f":orange[{full_display_title}]"
@@ -1039,7 +1004,6 @@ elif menu == "📜 Histórico":
         with st.expander(full_display_title):
             render_status_controls(item['id'], status, item.get('note', ''))
             
-            # --- CRUZAMENTO DE DADOS NO HISTÓRICO ---
             st.info("🧠 Inteligência Artificial")
             col_ia_btn, col_ia_info = st.columns([0.4, 0.6])
             
@@ -1052,7 +1016,6 @@ elif menu == "📜 Histórico":
                         st.warning("Recurso exclusivo para assinantes.")
                     else:
                         with st.spinner("Baixando documentos e analisando compatibilidade..."):
-                            # 1. Baixar Docs da Empresa
                             c_files = db.get_all_company_files_as_bytes(user['username'])
                             if not c_files:
                                 st.error("Você não tem documentos na pasta da empresa.")
@@ -1060,14 +1023,12 @@ elif menu == "📜 Histórico":
                                 try:
                                     temps = []
                                     gemini_files = []
-                                    # Upload para IA (Leitura Nativa/Visual)
                                     for n, d in c_files:
                                         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as t:
                                             t.write(d); tp = t.name
                                         temps.append(tp)
                                         gemini_files.append(genai.upload_file(tp, display_name=n))
                                     
-                                    # Prompt com Separação Técnica
                                     prompt_hist = f"""
                                     ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA. 
                                     Compare os documentos anexados da empresa com o seguinte resumo de edital:
@@ -1096,7 +1057,6 @@ elif menu == "📜 Histórico":
                                     model = genai.GenerativeModel('gemini-pro-latest')
                                     resp = model.generate_content(gemini_files + [prompt_hist])
                                     
-                                    # Atualizar no Banco
                                     new_content = content_txt + "\n\n---\n\n# 🛡️ VIABILIDADE (Gerada via Histórico)\n" + resp.text
                                     db.db.collection('users').document(user['username']).collection('history').document(item['id']).update({
                                         'content': new_content
