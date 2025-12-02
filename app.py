@@ -444,28 +444,8 @@ if not st.session_state.user:
                         else: 
                             # 3. Exibe o erro retornado pelo banco (Senha errada ou Motivo da Exclusão)
                             st.error(response if response else "Erro no login.")
-                elif sub_log:
-                    if captcha_ans != (st.session_state.log_n1 + st.session_state.log_n2):
-                        st.error("Captcha incorreto.")
-                        st.session_state.log_n1 = random.randint(1, 9)
-                        st.session_state.log_n2 = random.randint(1, 9)
-                        time.sleep(1); st.rerun()
-                    else:
-                        ok, response = db.login_user(u, p) # Recebe msg ou dict
-                        if ok:
-                            d = response
-                            st.session_state.user = {
-                                "username": d.get('username'), "name": d.get('name'),
-                                "role": d.get('role'), "plan": d.get('plan_type', 'free'),
-                                "credits": d.get('credits_used', 0), "token": d.get('token'),
-                                "company_name": d.get('company_name', ''), "cnpj": d.get('cnpj', ''),
-                                "plan_expires_at": d.get('plan_expires_at')
-                            }
-                            cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
-                            st.rerun()
-                        else: 
-                            # Exibe a mensagem de erro (incluindo o motivo da exclusão)
-                            st.error(response if response else "Erro no login.")
+                
+                # --- AQUI ESTAVA O ERRO: O bloco 'elif sub_log:' foi removido ---
         
         # --- ABA CADASTRO (ATUALIZADA) ---
         with t2:
