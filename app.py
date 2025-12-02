@@ -650,10 +650,19 @@ if menu == "Admin":
                     except ValueError:
                         current_index = 0 # Se não achar (ex: admin antigo), joga para 'free'
                     
-                    np = st.selectbox("Plano:", valid_plans, index=current_index)
+                    try: current_index = valid_plans.index(u_info['plan'])
+                    except ValueError: current_index = 0
                     
-                    # O botão está dentro do form, identado corretamente
+                    # ALTERAÇÃO AQUI: Adicionado format_func para mostrar nomes amigáveis
+                    np = st.selectbox(
+                        "Plano:", 
+                        valid_plans, 
+                        index=current_index,
+                        format_func=lambda x: PLAN_MAP.get(x, x)
+                    )
+                    
                     if st.form_submit_button("✅ Atualizar"):
+                    
                         # Lógica Específica para Ilimitado 30 dias
                         expiration = None
                         if np == 'unlimited_30':
