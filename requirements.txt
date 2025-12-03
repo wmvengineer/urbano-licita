@@ -8,4 +8,4 @@ markdown
 pandas
 streamlit-calendar
 toml
-streamlit-turnstile
+git+https://github.com/binh-dam/streamlit-turnstile.git
