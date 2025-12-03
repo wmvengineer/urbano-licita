@@ -14,6 +14,15 @@ import base64
 from captcha.image import ImageCaptcha
 import string
 
+# --- FUNÇÃO AUXILIAR (TEM QUE FICAR NO TOPO) ---
+def gerar_captcha():
+    """Gera uma imagem de captcha e retorna o texto e a imagem em bytes."""
+    image = ImageCaptcha(width=250, height=90)
+    # Gera 4 letras maiúsculas/números
+    captcha_text = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+    data = image.generate(captcha_text) 
+    return captcha_text, data
+
 # --- MAPA DE NOMES DE PLANOS (NOVOS REQUISITOS) ---
 PLAN_MAP = {
     'unlimited': 'Nível Administrador',
@@ -388,41 +397,54 @@ if not st.session_state.user:
                 u = st.text_input("Usuário ou E-mail", placeholder="Digite seu usuário ou e-mail")
                 p = st.text_input("Senha", type="password", placeholder="Digite sua senha")
                 
-                # --- LÓGICA CAPTCHA DE IMAGEM ---
-                # Garante que existe um captcha na sessão para o Login
+                # Inicia variáveis de sessão do captcha se não existirem
                 if 'captcha_login_text' not in st.session_state:
                     txt, img = gerar_captcha()
                     st.session_state.captcha_login_text = txt
                     st.session_state.captcha_login_img = img
 
+                # Layout do Captcha
+                st.markdown("---")
                 c_cap_img, c_cap_input = st.columns([1, 1])
+                
                 with c_cap_img:
+                    # Mostra a imagem armazenada na sessão
                     st.image(st.session_state.captcha_login_img, caption="Código de Segurança", width=150)
-                    # Botão pequeno para recarregar se estiver difícil de ler
-                    if st.form_submit_button("🔄 Trocar código"):
-                        txt, img = gerar_captcha()
-                        st.session_state.captcha_login_text = txt
-                        st.session_state.captcha_login_img = img
-                        st.rerun()
-
+                
                 with c_cap_input:
-                    captcha_input = st.text_input("Digite o código acima", key="in_cap_login")
+                    captcha_input = st.text_input("Digite o código da imagem", key="in_cap_login")
 
                 # Botões de Ação
-                c_btn_log, c_btn_rec = st.columns(2)
-                with c_btn_log:
-                    submitted_login = st.form_submit_button("LOGIN")
-                with c_btn_rec:
-                    submitted_recover = st.form_submit_button("RECUPERAR")
+                # Importante: Dentro de form, usamos form_submit_button para TUDO.
+                # Vamos criar 3 botões. O Streamlit retorna True para qual foi clicado.
+                
+                col_btn_1, col_btn_2, col_btn_3 = st.columns([1, 1, 1])
+                
+                with col_btn_1:
+                    btn_login = st.form_submit_button("ENTRAR")
+                with col_btn_2:
+                    btn_recuperar = st.form_submit_button("RECUPERAR SENHA")
+                with col_btn_3:
+                    # Botão para trocar a imagem (Refresh)
+                    btn_refresh = st.form_submit_button("🔄 Trocar Imagem")
 
-                if submitted_recover:
+                # --- LÓGICA APÓS O CLIQUE ---
+                
+                if btn_refresh:
+                    # Apenas gera novo captcha e recarrega
+                    txt, img = gerar_captcha()
+                    st.session_state.captcha_login_text = txt
+                    st.session_state.captcha_login_img = img
+                    st.rerun()
+
+                elif btn_recuperar:
                     if not u or "@" not in u:
-                        st.warning("Para recuperar, digite seu E-MAIL acima.")
+                        st.warning("Para recuperar, digite seu E-MAIL no campo acima.")
                     else:
                         # Validação Captcha
-                        if captcha_input.upper() != st.session_state.captcha_login_text:
+                        if not captcha_input or captcha_input.upper() != st.session_state.captcha_login_text:
                             st.error("Código de segurança incorreto.")
-                            # Regenera para evitar força bruta
+                            # Regenera para segurança
                             txt, img = gerar_captcha()
                             st.session_state.captcha_login_text = txt
                             st.session_state.captcha_login_img = img
@@ -432,9 +454,9 @@ if not st.session_state.user:
                                 if ok: st.success(msg)
                                 else: st.error(msg)
 
-                elif submitted_login:
+                elif btn_login:
                     # 1. Valida Captcha
-                    if captcha_input.upper() != st.session_state.captcha_login_text:
+                    if not captcha_input or captcha_input.upper() != st.session_state.captcha_login_text:
                         st.error("Código de segurança incorreto.")
                         txt, img = gerar_captcha()
                         st.session_state.captcha_login_text = txt
@@ -466,27 +488,38 @@ if not st.session_state.user:
                 ne = st.text_input("Email", placeholder="Seu melhor e-mail")
                 np = st.text_input("Senha", type="password", placeholder="Escolha uma senha")
                 
-                # --- LÓGICA CAPTCHA CADASTRO ---
+                # Inicia captcha do cadastro
                 if 'captcha_cad_text' not in st.session_state:
                     txt, img = gerar_captcha()
                     st.session_state.captcha_cad_text = txt
                     st.session_state.captcha_cad_img = img
 
-                c_cap_img_c, c_cap_input_c = st.columns([1, 1])
-                with c_cap_img_c:
-                    st.image(st.session_state.captcha_cad_img, caption="Código de Segurança", width=150)
-                    if st.form_submit_button("🔄 Trocar código (Cad)"):
-                        txt, img = gerar_captcha()
-                        st.session_state.captcha_cad_text = txt
-                        st.session_state.captcha_cad_img = img
-                        st.rerun()
+                st.markdown("---")
+                c_cad_img, c_cad_input = st.columns([1, 1])
                 
-                with c_cap_input_c:
+                with c_cad_img:
+                    st.image(st.session_state.captcha_cad_img, caption="Código de Segurança", width=150)
+                
+                with c_cad_input:
                     captcha_input_cad = st.text_input("Digite o código", key="in_cap_cad")
 
-                if st.form_submit_button("CADASTRAR"):
+                # Botões
+                col_c1, col_c2 = st.columns([2, 1])
+                with col_c1:
+                    btn_cadastrar = st.form_submit_button("CADASTRAR CONTA")
+                with col_c2:
+                    btn_refresh_cad = st.form_submit_button("🔄 Trocar Img")
+
+                # Lógica
+                if btn_refresh_cad:
+                    txt, img = gerar_captcha()
+                    st.session_state.captcha_cad_text = txt
+                    st.session_state.captcha_cad_img = img
+                    st.rerun()
+
+                elif btn_cadastrar:
                     # 1. Valida Captcha
-                    if captcha_input_cad.upper() != st.session_state.captcha_cad_text:
+                    if not captcha_input_cad or captcha_input_cad.upper() != st.session_state.captcha_cad_text:
                         st.error("Código de segurança incorreto.")
                         txt, img = gerar_captcha()
                         st.session_state.captcha_cad_text = txt
@@ -500,8 +533,11 @@ if not st.session_state.user:
                     else:
                         ok, m = db.register_user(nu, nn, ne, np, nc_empresa, nc_cnpj)
                         if ok: 
-                            st.success("Criado! Faça login.")
-                            time.sleep(1)
+                            st.success("Conta criada com sucesso! Faça login na aba ao lado.")
+                            # Limpa campos ou reseta captcha
+                            txt, img = gerar_captcha()
+                            st.session_state.captcha_cad_text = txt
+                            st.session_state.captcha_cad_img = img
                         else: 
                             st.error(m)
     st.stop()
