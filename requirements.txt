@@ -8,3 +8,4 @@ markdown
 pandas
 streamlit-calendar
 toml
+captcha
