@@ -10,7 +10,9 @@ import database as db
 import extra_streamlit_components as stx
 from io import BytesIO
 import random
-import base64 
+import base64
+from captcha.image import ImageCaptcha
+import string
 
 # --- MAPA DE NOMES DE PLANOS (NOVOS REQUISITOS) ---
 PLAN_MAP = {
@@ -386,15 +388,28 @@ if not st.session_state.user:
                 u = st.text_input("Usuário ou E-mail", placeholder="Digite seu usuário ou e-mail")
                 p = st.text_input("Senha", type="password", placeholder="Digite sua senha")
                 
-                # eCaptcha Login
-                if 'log_n1' not in st.session_state: st.session_state.log_n1 = random.randint(1, 9)
-                if 'log_n2' not in st.session_state: st.session_state.log_n2 = random.randint(1, 9)
-                
-                st.markdown(f"<p style='color: white; font-size: 12px; margin-bottom: 0px; margin-top: 15px;'>Segurança: Quanto é {st.session_state.log_n1} + {st.session_state.log_n2}?</p>", unsafe_allow_html=True)
-                captcha_ans = st.number_input("Resultado Captcha", step=1, label_visibility="collapsed", key="in_cap_log")
+                # --- LÓGICA CAPTCHA DE IMAGEM ---
+                # Garante que existe um captcha na sessão para o Login
+                if 'captcha_login_text' not in st.session_state:
+                    txt, img = gerar_captcha()
+                    st.session_state.captcha_login_text = txt
+                    st.session_state.captcha_login_img = img
 
+                c_cap_img, c_cap_input = st.columns([1, 1])
+                with c_cap_img:
+                    st.image(st.session_state.captcha_login_img, caption="Código de Segurança", width=150)
+                    # Botão pequeno para recarregar se estiver difícil de ler
+                    if st.form_submit_button("🔄 Trocar código"):
+                        txt, img = gerar_captcha()
+                        st.session_state.captcha_login_text = txt
+                        st.session_state.captcha_login_img = img
+                        st.rerun()
+
+                with c_cap_input:
+                    captcha_input = st.text_input("Digite o código acima", key="in_cap_login")
+
+                # Botões de Ação
                 c_btn_log, c_btn_rec = st.columns(2)
-                
                 with c_btn_log:
                     submitted_login = st.form_submit_button("LOGIN")
                 with c_btn_rec:
@@ -402,33 +417,31 @@ if not st.session_state.user:
 
                 if submitted_recover:
                     if not u or "@" not in u:
-                        st.warning("Para recuperar sua senha, digite seu E-MAIL no campo 'Usuário ou E-mail' acima e clique em Recuperar novamente.")
-                        st.session_state.log_n1 = random.randint(1, 9) 
+                        st.warning("Para recuperar, digite seu E-MAIL acima.")
                     else:
-                        real_ans = st.session_state.log_n1 + st.session_state.log_n2
-                        if captcha_ans != real_ans:
-                            st.error("Captcha incorreto.")
+                        # Validação Captcha
+                        if captcha_input.upper() != st.session_state.captcha_login_text:
+                            st.error("Código de segurança incorreto.")
+                            # Regenera para evitar força bruta
+                            txt, img = gerar_captcha()
+                            st.session_state.captcha_login_text = txt
+                            st.session_state.captcha_login_img = img
                         else:
-                            with st.spinner("Enviando senha temporária..."):
+                            with st.spinner("Enviando..."):
                                 ok, msg = db.recover_user_password(u)
                                 if ok: st.success(msg)
                                 else: st.error(msg)
-                                time.sleep(2) 
 
                 elif submitted_login:
-                    # 1. Verifica o Captcha
-                    real_ans = st.session_state.log_n1 + st.session_state.log_n2
-                    if captcha_ans != real_ans:
-                        st.error("eCaptcha incorreto.")
-                        st.session_state.log_n1 = random.randint(1, 9)
-                        st.session_state.log_n2 = random.randint(1, 9)
-                        time.sleep(1)
-                        st.rerun()
+                    # 1. Valida Captcha
+                    if captcha_input.upper() != st.session_state.captcha_login_text:
+                        st.error("Código de segurança incorreto.")
+                        txt, img = gerar_captcha()
+                        st.session_state.captcha_login_text = txt
+                        st.session_state.captcha_login_img = img
                     else:
-                        # 2. Tenta fazer o login
-                        # 'response' pode ser o dicionário do usuário (Sucesso) ou uma string de erro (Falha/Banido)
+                        # 2. Login no Banco
                         ok, response = db.login_user(u, p) 
-                        
                         if ok:
                             d = response
                             st.session_state.user = {
@@ -438,55 +451,56 @@ if not st.session_state.user:
                                 "company_name": d.get('company_name', ''), "cnpj": d.get('cnpj', ''),
                                 "plan_expires_at": d.get('plan_expires_at')
                             }
-                            # Define o cookie para manter logado
                             cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
                             st.rerun()
                         else: 
-                            # 3. Exibe o erro retornado pelo banco (Senha errada ou Motivo da Exclusão)
                             st.error(response if response else "Erro no login.")
-                
-                # --- AQUI ESTAVA O ERRO: O bloco 'elif sub_log:' foi removido ---
         
-        # --- ABA CADASTRO (ATUALIZADA) ---
+        # --- ABA CADASTRO ---
         with t2:
             with st.form("f_cad"):
-                # Novos Campos no Início
                 nc_empresa = st.text_input("Nome da Empresa", placeholder="Razão Social")
-                
-                # ALTERAÇÃO 1: Campo configurado para sugerir apenas números e limitar a 14 digitos
                 nc_cnpj = st.text_input("CNPJ (Somente Números)", placeholder="Ex: 12345678000190", max_chars=14)
-
                 nu = st.text_input("Usuário", placeholder="Escolha um usuário")
                 nn = st.text_input("Nome", placeholder="Seu nome completo")
                 ne = st.text_input("Email", placeholder="Seu melhor e-mail")
                 np = st.text_input("Senha", type="password", placeholder="Escolha uma senha")
                 
-                if 'cad_n1' not in st.session_state: st.session_state.cad_n1 = random.randint(1, 9)
-                if 'cad_n2' not in st.session_state: st.session_state.cad_n2 = random.randint(1, 9)
+                # --- LÓGICA CAPTCHA CADASTRO ---
+                if 'captcha_cad_text' not in st.session_state:
+                    txt, img = gerar_captcha()
+                    st.session_state.captcha_cad_text = txt
+                    st.session_state.captcha_cad_img = img
+
+                c_cap_img_c, c_cap_input_c = st.columns([1, 1])
+                with c_cap_img_c:
+                    st.image(st.session_state.captcha_cad_img, caption="Código de Segurança", width=150)
+                    if st.form_submit_button("🔄 Trocar código (Cad)"):
+                        txt, img = gerar_captcha()
+                        st.session_state.captcha_cad_text = txt
+                        st.session_state.captcha_cad_img = img
+                        st.rerun()
                 
-                st.markdown(f"<p style='color: white; font-size: 12px; margin-bottom: 0px; margin-top: 15px;'>Segurança: Quanto é {st.session_state.cad_n1} + {st.session_state.cad_n2}?</p>", unsafe_allow_html=True)
-                cad_captcha_ans = st.number_input("Resultado Captcha Cad", step=1, label_visibility="collapsed", key="in_cap_cad")
+                with c_cap_input_c:
+                    captcha_input_cad = st.text_input("Digite o código", key="in_cap_cad")
 
                 if st.form_submit_button("CADASTRAR"):
-                    real_cad_ans = st.session_state.cad_n1 + st.session_state.cad_n2
-                    
                     # 1. Valida Captcha
-                    if cad_captcha_ans != real_cad_ans:
-                        st.error("eCaptcha incorreto.")
-                        st.session_state.cad_n1 = random.randint(1, 9)
-                        st.session_state.cad_n2 = random.randint(1, 9)
-                        time.sleep(1)
-                        st.rerun()
+                    if captcha_input_cad.upper() != st.session_state.captcha_cad_text:
+                        st.error("Código de segurança incorreto.")
+                        txt, img = gerar_captcha()
+                        st.session_state.captcha_cad_text = txt
+                        st.session_state.captcha_cad_img = img
                     
-                    # ALTERAÇÃO 2: Valida se o CNPJ contém apenas números
+                    # 2. Valida CNPJ
                     elif not nc_cnpj.isdigit():
-                        st.error("O CNPJ deve ser preenchido estritamente com números (sem pontos, barras ou traços).")
+                        st.error("O CNPJ deve conter apenas números.")
                     
-                    # 3. Prossegue com o cadastro
+                    # 3. Cadastro
                     else:
                         ok, m = db.register_user(nu, nn, ne, np, nc_empresa, nc_cnpj)
                         if ok: 
-                            st.success("Criado! Faça login com seu e-mail e senha cadastrados.")
+                            st.success("Criado! Faça login.")
                             time.sleep(1)
                         else: 
                             st.error(m)
