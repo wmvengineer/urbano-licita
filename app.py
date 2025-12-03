@@ -9,8 +9,8 @@ from datetime import datetime, timedelta
 import database as db
 import extra_streamlit_components as stx
 from io import BytesIO
-import base64
-from streamlit_turnstile import st_turnstile
+import random
+import base64 
 
 # --- MAPA DE NOMES DE PLANOS (NOVOS REQUISITOS) ---
 PLAN_MAP = {
@@ -208,20 +208,16 @@ if st.session_state.user is None:
             pass
 
 def logout():
-    # Limpa a variável de usuário
     st.session_state.user = None
-    
-    # Tenta remover o cookie
     try:
+        # Tenta remover o cookie. Se ele já não existir (KeyError), apenas ignora.
         cookie_manager.delete("urbano_auth")
-    except:
+    except KeyError:
+        pass
+    except Exception:
         pass
         
-    # --- NOVO: LIMPEZA TOTAL ---
-    # Isso garante que qualquer resquício de captcha ou formulário anterior suma
-    st.session_state.clear()
-    
-    time.sleep(0.5)
+    time.sleep(1)
     st.rerun()
 
 # --- TELA DE LOGIN (Redesign V3) ---
@@ -390,43 +386,49 @@ if not st.session_state.user:
                 u = st.text_input("Usuário ou E-mail", placeholder="Digite seu usuário ou e-mail")
                 p = st.text_input("Senha", type="password", placeholder="Digite sua senha")
                 
-                st.markdown("<br>", unsafe_allow_html=True)
+                # eCaptcha Login
+                if 'log_n1' not in st.session_state: st.session_state.log_n1 = random.randint(1, 9)
+                if 'log_n2' not in st.session_state: st.session_state.log_n2 = random.randint(1, 9)
                 
-                # WIDGET CLOUDFLARE TURNSTILE
-                turnstile_login = st_turnstile(
-                    site_key=st.secrets["TURNSTILE"]["SITE_KEY"],
-                    theme="light",
-                    language="pt",
-                    size="normal"
-                )
-                
+                st.markdown(f"<p style='color: white; font-size: 12px; margin-bottom: 0px; margin-top: 15px;'>Segurança: Quanto é {st.session_state.log_n1} + {st.session_state.log_n2}?</p>", unsafe_allow_html=True)
+                captcha_ans = st.number_input("Resultado Captcha", step=1, label_visibility="collapsed", key="in_cap_log")
+
                 c_btn_log, c_btn_rec = st.columns(2)
                 
                 with c_btn_log:
-                    submitted_login = st.form_submit_button("ENTRAR")
+                    submitted_login = st.form_submit_button("LOGIN")
                 with c_btn_rec:
-                    submitted_recover = st.form_submit_button("RECUPERAR SENHA")
+                    submitted_recover = st.form_submit_button("RECUPERAR")
 
-                # LÓGICA
                 if submitted_recover:
                     if not u or "@" not in u:
-                        st.warning("Para recuperar, digite seu E-MAIL no campo acima.")
+                        st.warning("Para recuperar sua senha, digite seu E-MAIL no campo 'Usuário ou E-mail' acima e clique em Recuperar novamente.")
+                        st.session_state.log_n1 = random.randint(1, 9) 
                     else:
-                        # Validação Turnstile
-                        if not turnstile_login or not turnstile_login["success"]:
-                            st.error("⚠️ Verificação de segurança falhou. Tente novamente.")
+                        real_ans = st.session_state.log_n1 + st.session_state.log_n2
+                        if captcha_ans != real_ans:
+                            st.error("Captcha incorreto.")
                         else:
                             with st.spinner("Enviando senha temporária..."):
                                 ok, msg = db.recover_user_password(u)
                                 if ok: st.success(msg)
                                 else: st.error(msg)
+                                time.sleep(2) 
 
                 elif submitted_login:
-                    # Validação Turnstile
-                    if not turnstile_login or not turnstile_login["success"]:
-                        st.error("⚠️ Verificação de segurança incompleta.")
+                    # 1. Verifica o Captcha
+                    real_ans = st.session_state.log_n1 + st.session_state.log_n2
+                    if captcha_ans != real_ans:
+                        st.error("eCaptcha incorreto.")
+                        st.session_state.log_n1 = random.randint(1, 9)
+                        st.session_state.log_n2 = random.randint(1, 9)
+                        time.sleep(1)
+                        st.rerun()
                     else:
+                        # 2. Tenta fazer o login
+                        # 'response' pode ser o dicionário do usuário (Sucesso) ou uma string de erro (Falha/Banido)
                         ok, response = db.login_user(u, p) 
+                        
                         if ok:
                             d = response
                             st.session_state.user = {
@@ -436,45 +438,55 @@ if not st.session_state.user:
                                 "company_name": d.get('company_name', ''), "cnpj": d.get('cnpj', ''),
                                 "plan_expires_at": d.get('plan_expires_at')
                             }
+                            # Define o cookie para manter logado
                             cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
                             st.rerun()
                         else: 
+                            # 3. Exibe o erro retornado pelo banco (Senha errada ou Motivo da Exclusão)
                             st.error(response if response else "Erro no login.")
+                
+                # --- AQUI ESTAVA O ERRO: O bloco 'elif sub_log:' foi removido ---
         
-        # --- ABA CADASTRO ---
+        # --- ABA CADASTRO (ATUALIZADA) ---
         with t2:
             with st.form("f_cad"):
+                # Novos Campos no Início
                 nc_empresa = st.text_input("Nome da Empresa", placeholder="Razão Social")
+                
+                # ALTERAÇÃO 1: Campo configurado para sugerir apenas números e limitar a 14 digitos
                 nc_cnpj = st.text_input("CNPJ (Somente Números)", placeholder="Ex: 12345678000190", max_chars=14)
+
                 nu = st.text_input("Usuário", placeholder="Escolha um usuário")
                 nn = st.text_input("Nome", placeholder="Seu nome completo")
                 ne = st.text_input("Email", placeholder="Seu melhor e-mail")
                 np = st.text_input("Senha", type="password", placeholder="Escolha uma senha")
                 
-                st.markdown("<br>", unsafe_allow_html=True)
+                if 'cad_n1' not in st.session_state: st.session_state.cad_n1 = random.randint(1, 9)
+                if 'cad_n2' not in st.session_state: st.session_state.cad_n2 = random.randint(1, 9)
+                
+                st.markdown(f"<p style='color: white; font-size: 12px; margin-bottom: 0px; margin-top: 15px;'>Segurança: Quanto é {st.session_state.cad_n1} + {st.session_state.cad_n2}?</p>", unsafe_allow_html=True)
+                cad_captcha_ans = st.number_input("Resultado Captcha Cad", step=1, label_visibility="collapsed", key="in_cap_cad")
 
-                # WIDGET CLOUDFLARE TURNSTILE
-                turnstile_cad = st_turnstile(
-                    site_key=st.secrets["TURNSTILE"]["SITE_KEY"],
-                    theme="light",
-                    language="pt",
-                    size="normal"
-                )
-
-                if st.form_submit_button("CADASTRAR CONTA"):
-                    # 1. Validação Turnstile
-                    if not turnstile_cad or not turnstile_cad["success"]:
-                        st.error("⚠️ Verificação de segurança falhou.")
+                if st.form_submit_button("CADASTRAR"):
+                    real_cad_ans = st.session_state.cad_n1 + st.session_state.cad_n2
                     
-                    # 2. Validação CNPJ
+                    # 1. Valida Captcha
+                    if cad_captcha_ans != real_cad_ans:
+                        st.error("eCaptcha incorreto.")
+                        st.session_state.cad_n1 = random.randint(1, 9)
+                        st.session_state.cad_n2 = random.randint(1, 9)
+                        time.sleep(1)
+                        st.rerun()
+                    
+                    # ALTERAÇÃO 2: Valida se o CNPJ contém apenas números
                     elif not nc_cnpj.isdigit():
-                        st.error("O CNPJ deve conter apenas números.")
+                        st.error("O CNPJ deve ser preenchido estritamente com números (sem pontos, barras ou traços).")
                     
-                    # 3. Cadastro
+                    # 3. Prossegue com o cadastro
                     else:
                         ok, m = db.register_user(nu, nn, ne, np, nc_empresa, nc_cnpj)
                         if ok: 
-                            st.success("Conta criada! Faça login na aba ao lado.")
+                            st.success("Criado! Faça login com seu e-mail e senha cadastrados.")
                             time.sleep(1)
                         else: 
                             st.error(m)
