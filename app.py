@@ -9,19 +9,8 @@ from datetime import datetime, timedelta
 import database as db
 import extra_streamlit_components as stx
 from io import BytesIO
-import random
 import base64
-from captcha.image import ImageCaptcha
-import string
-
-# --- FUNÇÃO AUXILIAR (TEM QUE FICAR NO TOPO) ---
-def gerar_captcha():
-    """Gera uma imagem de captcha e retorna o texto e a imagem em bytes."""
-    image = ImageCaptcha(width=250, height=90)
-    # Gera 4 letras maiúsculas/números
-    captcha_text = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
-    data = image.generate(captcha_text) 
-    return captcha_text, data
+from streamlit_turnstile import st_turnstile
 
 # --- MAPA DE NOMES DE PLANOS (NOVOS REQUISITOS) ---
 PLAN_MAP = {
@@ -219,16 +208,20 @@ if st.session_state.user is None:
             pass
 
 def logout():
+    # Limpa a variável de usuário
     st.session_state.user = None
+    
+    # Tenta remover o cookie
     try:
-        # Tenta remover o cookie. Se ele já não existir (KeyError), apenas ignora.
         cookie_manager.delete("urbano_auth")
-    except KeyError:
-        pass
-    except Exception:
+    except:
         pass
         
-    time.sleep(1)
+    # --- NOVO: LIMPEZA TOTAL ---
+    # Isso garante que qualquer resquício de captcha ou formulário anterior suma
+    st.session_state.clear()
+    
+    time.sleep(0.5)
     st.rerun()
 
 # --- TELA DE LOGIN (Redesign V3) ---
@@ -397,72 +390,42 @@ if not st.session_state.user:
                 u = st.text_input("Usuário ou E-mail", placeholder="Digite seu usuário ou e-mail")
                 p = st.text_input("Senha", type="password", placeholder="Digite sua senha")
                 
-                # Inicia variáveis de sessão do captcha se não existirem
-                if 'captcha_login_text' not in st.session_state:
-                    txt, img = gerar_captcha()
-                    st.session_state.captcha_login_text = txt
-                    st.session_state.captcha_login_img = img
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                # WIDGET CLOUDFLARE TURNSTILE
+                turnstile_login = st_turnstile(
+                    site_key=st.secrets["TURNSTILE"]["SITE_KEY"],
+                    theme="light",
+                    language="pt",
+                    size="normal"
+                )
+                
+                c_btn_log, c_btn_rec = st.columns(2)
+                
+                with c_btn_log:
+                    submitted_login = st.form_submit_button("ENTRAR")
+                with c_btn_rec:
+                    submitted_recover = st.form_submit_button("RECUPERAR SENHA")
 
-                # Layout do Captcha
-                st.markdown("---")
-                c_cap_img, c_cap_input = st.columns([1, 1])
-                
-                with c_cap_img:
-                    # Mostra a imagem armazenada na sessão
-                    st.image(st.session_state.captcha_login_img, caption="Código de Segurança", width=150)
-                
-                with c_cap_input:
-                    captcha_input = st.text_input("Digite o código da imagem", key="in_cap_login")
-
-                # Botões de Ação
-                # Importante: Dentro de form, usamos form_submit_button para TUDO.
-                # Vamos criar 3 botões. O Streamlit retorna True para qual foi clicado.
-                
-                col_btn_1, col_btn_2, col_btn_3 = st.columns([1, 1, 1])
-                
-                with col_btn_1:
-                    btn_login = st.form_submit_button("ENTRAR")
-                with col_btn_2:
-                    btn_recuperar = st.form_submit_button("RECUPERAR SENHA")
-                with col_btn_3:
-                    # Botão para trocar a imagem (Refresh)
-                    btn_refresh = st.form_submit_button("🔄 Trocar Imagem")
-
-                # --- LÓGICA APÓS O CLIQUE ---
-                
-                if btn_refresh:
-                    # Apenas gera novo captcha e recarrega
-                    txt, img = gerar_captcha()
-                    st.session_state.captcha_login_text = txt
-                    st.session_state.captcha_login_img = img
-                    st.rerun()
-
-                elif btn_recuperar:
+                # LÓGICA
+                if submitted_recover:
                     if not u or "@" not in u:
                         st.warning("Para recuperar, digite seu E-MAIL no campo acima.")
                     else:
-                        # Validação Captcha
-                        if not captcha_input or captcha_input.upper() != st.session_state.captcha_login_text:
-                            st.error("Código de segurança incorreto.")
-                            # Regenera para segurança
-                            txt, img = gerar_captcha()
-                            st.session_state.captcha_login_text = txt
-                            st.session_state.captcha_login_img = img
+                        # Validação Turnstile
+                        if not turnstile_login or not turnstile_login["success"]:
+                            st.error("⚠️ Verificação de segurança falhou. Tente novamente.")
                         else:
-                            with st.spinner("Enviando..."):
+                            with st.spinner("Enviando senha temporária..."):
                                 ok, msg = db.recover_user_password(u)
                                 if ok: st.success(msg)
                                 else: st.error(msg)
 
-                elif btn_login:
-                    # 1. Valida Captcha
-                    if not captcha_input or captcha_input.upper() != st.session_state.captcha_login_text:
-                        st.error("Código de segurança incorreto.")
-                        txt, img = gerar_captcha()
-                        st.session_state.captcha_login_text = txt
-                        st.session_state.captcha_login_img = img
+                elif submitted_login:
+                    # Validação Turnstile
+                    if not turnstile_login or not turnstile_login["success"]:
+                        st.error("⚠️ Verificação de segurança incompleta.")
                     else:
-                        # 2. Login no Banco
                         ok, response = db.login_user(u, p) 
                         if ok:
                             d = response
@@ -488,44 +451,22 @@ if not st.session_state.user:
                 ne = st.text_input("Email", placeholder="Seu melhor e-mail")
                 np = st.text_input("Senha", type="password", placeholder="Escolha uma senha")
                 
-                # Inicia captcha do cadastro
-                if 'captcha_cad_text' not in st.session_state:
-                    txt, img = gerar_captcha()
-                    st.session_state.captcha_cad_text = txt
-                    st.session_state.captcha_cad_img = img
+                st.markdown("<br>", unsafe_allow_html=True)
 
-                st.markdown("---")
-                c_cad_img, c_cad_input = st.columns([1, 1])
-                
-                with c_cad_img:
-                    st.image(st.session_state.captcha_cad_img, caption="Código de Segurança", width=150)
-                
-                with c_cad_input:
-                    captcha_input_cad = st.text_input("Digite o código", key="in_cap_cad")
+                # WIDGET CLOUDFLARE TURNSTILE
+                turnstile_cad = st_turnstile(
+                    site_key=st.secrets["TURNSTILE"]["SITE_KEY"],
+                    theme="light",
+                    language="pt",
+                    size="normal"
+                )
 
-                # Botões
-                col_c1, col_c2 = st.columns([2, 1])
-                with col_c1:
-                    btn_cadastrar = st.form_submit_button("CADASTRAR CONTA")
-                with col_c2:
-                    btn_refresh_cad = st.form_submit_button("🔄 Trocar Img")
-
-                # Lógica
-                if btn_refresh_cad:
-                    txt, img = gerar_captcha()
-                    st.session_state.captcha_cad_text = txt
-                    st.session_state.captcha_cad_img = img
-                    st.rerun()
-
-                elif btn_cadastrar:
-                    # 1. Valida Captcha
-                    if not captcha_input_cad or captcha_input_cad.upper() != st.session_state.captcha_cad_text:
-                        st.error("Código de segurança incorreto.")
-                        txt, img = gerar_captcha()
-                        st.session_state.captcha_cad_text = txt
-                        st.session_state.captcha_cad_img = img
+                if st.form_submit_button("CADASTRAR CONTA"):
+                    # 1. Validação Turnstile
+                    if not turnstile_cad or not turnstile_cad["success"]:
+                        st.error("⚠️ Verificação de segurança falhou.")
                     
-                    # 2. Valida CNPJ
+                    # 2. Validação CNPJ
                     elif not nc_cnpj.isdigit():
                         st.error("O CNPJ deve conter apenas números.")
                     
@@ -533,11 +474,8 @@ if not st.session_state.user:
                     else:
                         ok, m = db.register_user(nu, nn, ne, np, nc_empresa, nc_cnpj)
                         if ok: 
-                            st.success("Conta criada com sucesso! Faça login na aba ao lado.")
-                            # Limpa campos ou reseta captcha
-                            txt, img = gerar_captcha()
-                            st.session_state.captcha_cad_text = txt
-                            st.session_state.captcha_cad_img = img
+                            st.success("Conta criada! Faça login na aba ao lado.")
+                            time.sleep(1)
                         else: 
                             st.error(m)
     st.stop()
