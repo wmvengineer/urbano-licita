@@ -546,89 +546,82 @@ def check_deadlines_and_notify():
     
     return logs
 
-# --- INTEGRAÇÃO MERCADO PAGO ---
+# --- INTEGRAÇÃO MERCADO PAGO (CHECKOUT PRO / REDIRECT) ---
 
-def create_mercadopago_order(user_dict, plan_tag, amount_float, plan_name):
+def create_mercadopago_preference(user_dict, plan_tag, amount_float, plan_name):
     """
-    Cria um pagamento PIX no Mercado Pago.
-    amount_float: Valor em REAIS (ex: 29.90) e não centavos.
+    Gera um LINK de pagamento (Checkout Pro).
+    Retorna: (True, url_do_checkout) ou (False, erro)
     """
     if "MERCADOPAGO" not in st.secrets:
-        return False, "Configuração MERCADOPAGO não encontrada."
+        return False, "Configuração MERCADOPAGO incompleta."
 
     token = st.secrets["MERCADOPAGO"]["ACCESS_TOKEN"]
-    url = "https://api.mercadopago.com/v1/payments"
+    # Pega a URL do app configurada ou usa localhost como fallback
+    app_url = st.secrets["MERCADOPAGO"].get("APP_URL", "http://localhost:8501")
+    
+    url = "https://api.mercadopago.com/checkout/preferences"
     
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "X-Idempotency-Key": str(uuid.uuid4()) # Evita pagamentos duplicados acidentais
+        "X-Idempotency-Key": str(uuid.uuid4())
     }
 
-    # Tratamento de Email (Mercado Pago exige email válido)
-    email = user_dict.get('email', 'email@teste.com')
-    if "@" not in email: email = "email@teste.com"
-
-    # Tratamento de CPF (Opcional no MP, mas bom ter)
-    raw_doc = str(user_dict.get('cnpj', '')).strip()
-    doc_number = "".join(filter(str.isdigit, raw_doc))
-    # MP exige que identifique se é CPF ou CNPJ pelo tamanho
-    doc_type = "CNPJ" if len(doc_number) > 11 else "CPF"
-    if not doc_number: doc_number = "19111111111" # Fallback
-
+    # Preferência de Pagamento
     payload = {
-        "transaction_amount": float(amount_float), # MP usa FLOAT (29.90)
-        "description": f"Assinatura Urbano - {plan_name}",
-        "payment_method_id": "pix",
-        "payer": {
-            "email": email,
-            "first_name": user_dict.get('name', 'Cliente')[:30],
-            "identification": {
-                "type": doc_type,
-                "number": doc_number
+        "items": [
+            {
+                "id": plan_tag,
+                "title": f"Assinatura Urbano - {plan_name}",
+                "quantity": 1,
+                "currency_id": "BRL",
+                "unit_price": float(amount_float)
             }
+        ],
+        "payer": {
+            "name": user_dict.get('name', 'Cliente')[:30],
+            "email": user_dict.get('email', 'email@teste.com'),
         },
+        "back_urls": {
+            "success": app_url,   # Para onde volta se der certo
+            "failure": app_url,   # Para onde volta se falhar
+            "pending": app_url    # Para onde volta se ficar pendente
+        },
+        "auto_return": "approved", # Volta automaticamente se aprovado
         "metadata": {
-            "plan_tag": plan_tag,
-            "user_id": user_dict.get('username')
-        }
+            "plan_tag": plan_tag,        # Guardamos qual é o plano aqui
+            "username": user_dict['username'] # Guardamos quem é o usuário
+        },
+        "external_reference": f"{plan_tag}_{int(datetime.datetime.now().timestamp())}"
     }
 
     try:
         response = requests.post(url, headers=headers, json=payload)
         if response.status_code in [200, 201]:
-            return True, response.json()
+            res_json = response.json()
+            # Retorna o link de pagamento (init_point)
+            return True, res_json.get("init_point") 
         else:
             return False, response.text
     except Exception as e:
         return False, str(e)
 
-def check_mercadopago_status(payment_id):
+def get_payment_details(payment_id):
     """
-    Verifica o status do pagamento no Mercado Pago.
+    Busca os detalhes de um pagamento pelo ID para validação segura.
     """
     if "MERCADOPAGO" not in st.secrets: return None
-
+    
     token = st.secrets["MERCADOPAGO"]["ACCESS_TOKEN"]
     url = f"https://api.mercadopago.com/v1/payments/{payment_id}"
     
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
+    headers = {"Authorization": f"Bearer {token}"}
     
     try:
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            data = response.json()
-            status = data.get('status')
-            
-            # Status possíveis: pending, approved, authorized, in_process, in_mediation, rejected, cancelled, refunded, charged_back
-            if status == 'approved':
-                return 'paid'
-            elif status == 'rejected' or status == 'cancelled':
-                return 'failed'
-            else:
-                return 'pending'
+        req = requests.get(url, headers=headers)
+        if req.status_code == 200:
+            return req.json()
         return None
     except:
         return None

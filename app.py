@@ -494,6 +494,48 @@ if not st.session_state.user:
 
 # --- ÁREA LOGADA ---
 user = st.session_state.user
+query_params = st.query_params # Streamlit novo usa st.query_params
+
+if query_params.get("status") == "approved" and query_params.get("payment_id"):
+    pay_id = query_params.get("payment_id")
+    
+    # Para evitar reprocessar o mesmo pagamento toda vez que der refresh,
+    # podemos salvar o ID processado na sessão ou apenas confiar na verificação.
+    if "last_processed_payment" not in st.session_state or st.session_state.last_processed_payment != pay_id:
+        with st.spinner("Validando pagamento..."):
+            payment_info = db.get_payment_details(pay_id)
+            
+            if payment_info and payment_info.get("status") == "approved":
+                # Recupera qual era o plano através dos metadados que enviamos
+                meta = payment_info.get("metadata", {})
+                plan_tag_bought = meta.get("plan_tag")
+                buyer_user = meta.get("username")
+                
+                # Validação de segurança: O pagamento é deste usuário mesmo?
+                if buyer_user == user['username'] and plan_tag_bought:
+                    
+                    # ATIVA O PLANO
+                    expiration = None
+                    if plan_tag_bought == 'unlimited_30':
+                        expiration = datetime.now() + timedelta(days=30)
+                    
+                    db.admin_update_plan(user['username'], plan_tag_bought, expires_at=expiration)
+                    db.admin_set_credits_used(user['username'], 0)
+                    
+                    # Atualiza a sessão atual para refletir a mudança imediatamente
+                    user['plan'] = plan_tag_bought
+                    user['credits'] = 0
+                    st.session_state.user['plan'] = plan_tag_bought
+                    
+                    st.toast("✅ Pagamento confirmado! Plano ativado com sucesso!", icon="🎉")
+                    st.session_state.last_processed_payment = pay_id
+                    
+                    # Limpa a URL para não ficar processando de novo
+                    time.sleep(2)
+                    st.query_params.clear()
+                    st.rerun()
+            else:
+                st.error("Erro ao validar pagamento. Entre em contato com o suporte.")
 if 'analise_atual' not in st.session_state: st.session_state.analise_atual = None
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 if 'gemini_files_handles' not in st.session_state: st.session_state.gemini_files_handles = []
@@ -1307,14 +1349,11 @@ elif menu == "📅 Calendário":
             if pdf: 
                 st.download_button("⬇️ Baixar PDF da Análise", data=pdf, file_name="analise_completa.pdf")
 
-# 6. ASSINATURA (MERCADO PAGO)
+# # 6. ASSINATURA (CHECKOUT REDIRECT)
 elif menu == "Assinatura":
     st.title("💎 Planos & Assinaturas")
-    
     st.info(f"Seu Plano Atual: **{PLAN_MAP.get(user['plan'], user['plan']).upper()}** | Créditos Disponíveis: {user['credits']}")
     
-    # LISTA DE PLANOS - ATENÇÃO AOS VALORES EM FLOAT (REAIS)
-    # Estrutura: ("Nome", "Tag", "Texto", Valor Float, Créditos)
     plans_data = [
         ("🥉 Plano 15", "plano_15", "R$ 29,90", 29.90, 15),
         ("🥈 Plano 30", "plano_30", "R$ 54,90", 54.90, 30),
@@ -1323,114 +1362,25 @@ elif menu == "Assinatura":
         ("♾️ Ilimitado (30 Dias)", "unlimited_30", "R$ 229,90", 229.90, 999999)
     ]
 
-    if "payment_pending" not in st.session_state: st.session_state.payment_pending = False
-    if "payment_data" not in st.session_state: st.session_state.payment_data = {}
-    if "payment_plan_selected" not in st.session_state: st.session_state.payment_plan_selected = None
-
-    # --- TELA DE SELEÇÃO ---
-    if not st.session_state.payment_pending:
-        st.write("Escolha o pacote ideal:")
-        cols = st.columns(len(plans_data)) if len(plans_data) <= 4 else st.columns(3)
-        
-        for i, (p_name, p_tag, p_price, p_val, p_credits) in enumerate(plans_data):
-            col = cols[i % 3] 
-            with col:
-                with st.container(border=True):
-                    st.markdown(f"### {p_name}")
-                    st.markdown(f"<h2 style='color: #009ee3;'>{p_price}</h2>", unsafe_allow_html=True)
-                    st.caption("Liberação Automática via Mercado Pago")
-                    
-                    if st.button(f"Comprar {p_name}", key=f"btn_buy_{i}", use_container_width=True):
-                        with st.spinner("Gerando PIX..."):
-                            # Chama função do Mercado Pago
-                            ok, res = db.create_mercadopago_order(user, p_tag, p_val, p_name)
-                            
-                            if ok:
-                                try:
-                                    # LÓGICA DE EXTRAÇÃO MERCADO PAGO
-                                    poi = res.get('point_of_interaction', {})
-                                    txn_data = poi.get('transaction_data', {})
-                                    
-                                    qr_code_base64 = txn_data.get('qr_code_base64') # Imagem em Base64
-                                    qr_code_text = txn_data.get('qr_code') # Copia e Cola
-                                    payment_id = res.get('id')
-                                    
-                                    if not qr_code_text:
-                                        st.error("Erro: QR Code não gerado pelo Mercado Pago.")
-                                        st.write(res)
-                                        st.stop()
-
-                                    st.session_state.payment_pending = True
-                                    st.session_state.payment_data = {
-                                        "qr_img_b64": qr_code_base64,
-                                        "qr_text": qr_code_text,
-                                        "order_id": payment_id,
-                                        "amount": p_price
-                                    }
-                                    st.session_state.payment_plan_selected = p_tag
-                                    st.rerun()
-                                    
-                                except Exception as e:
-                                    st.error(f"Erro ao processar resposta: {e}")
-                                    st.write(res)
-                            else:
-                                st.error("Erro na comunicação com Mercado Pago:")
-                                st.code(res)
-
-    # --- TELA DE CHECKOUT ---
-    else:
-        st.markdown("---")
-        c1, c2 = st.columns([1, 1])
-        pay_dat = st.session_state.payment_data
-        
-        with c1:
-            st.subheader("Pagamento via PIX (Mercado Pago)")
-            st.write(f"Valor: **{pay_dat['amount']}**")
-            
-            # Exibe QR Code (Base64)
-            if pay_dat.get('qr_img_b64'):
-                st.markdown(
-                    f'<div style="text-align: center;"><img src="data:image/png;base64,{pay_dat["qr_img_b64"]}" width="250" /></div>',
-                    unsafe_allow_html=True
-                )
-            else:
-                st.warning("Imagem QR não disponível.")
-            
-            st.text_area("Copia e Cola:", pay_dat.get('qr_text'), height=100)
-            
-            if st.button("❌ Cancelar"):
-                st.session_state.payment_pending = False
-                st.session_state.payment_data = {}
-                st.rerun()
-
-        with c2:
-            st.subheader("Confirmação")
-            st.info("Assim que pagar no app do banco, clique abaixo:")
-            
-            if st.button("🔄 JÁ PAGUEI / VERIFICAR", type="primary", use_container_width=True):
-                with st.spinner("Verificando status..."):
-                    status = db.check_mercadopago_status(pay_dat['order_id'])
-                    
-                    if status == 'paid':
-                        target_plan = st.session_state.payment_plan_selected
+    st.write("Escolha o pacote ideal:")
+    cols = st.columns(len(plans_data)) if len(plans_data) <= 4 else st.columns(3)
+    
+    for i, (p_name, p_tag, p_price, p_val, p_credits) in enumerate(plans_data):
+        col = cols[i % 3] 
+        with col:
+            with st.container(border=True):
+                st.markdown(f"### {p_name}")
+                st.markdown(f"<h2 style='color: #009ee3;'>{p_price}</h2>", unsafe_allow_html=True)
+                st.caption("PIX, Cartão ou Boleto")
+                
+                # Botão que gera o link
+                if st.button(f"Assinar {p_name}", key=f"btn_pref_{i}", use_container_width=True):
+                    with st.spinner("Gerando checkout seguro..."):
+                        ok, checkout_url = db.create_mercadopago_preference(user, p_tag, p_val, p_name)
                         
-                        # Define validade se ilimitado
-                        expiration = None
-                        if target_plan == 'unlimited_30':
-                            expiration = datetime.now() + timedelta(days=30)
-                            
-                        # Atualiza no Banco
-                        db.admin_update_plan(user['username'], target_plan, expires_at=expiration)
-                        db.admin_set_credits_used(user['username'], 0)
-                        
-                        st.balloons()
-                        st.success("✅ Pagamento Aprovado! Plano Ativado com Sucesso.")
-                        
-                        st.session_state.payment_pending = False
-                        st.session_state.payment_data = {}
-                        time.sleep(3)
-                        st.rerun()
-                    elif status == 'failed':
-                        st.error("Pagamento rejeitado ou cancelado.")
-                    else:
-                        st.warning("Ainda não identificamos o pagamento. Aguarde alguns segundos e tente novamente.")
+                        if ok:
+                            # Opção 1: Link Button (Abre nova aba)
+                            st.link_button(f"👉 CLIQUE PARA PAGAR {p_name}", checkout_url, type="primary", use_container_width=True)
+                            st.caption("Você será redirecionado para o Mercado Pago.")
+                        else:
+                            st.error("Erro ao gerar link.")
