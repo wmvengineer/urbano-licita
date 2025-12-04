@@ -1347,12 +1347,32 @@ elif menu == "Assinatura":
                     if st.button(f"Comprar {p_name}", key=f"btn_buy_{i}", use_container_width=True):
                         with st.spinner("Gerando PIX..."):
                             ok, res = db.create_pagarme_order(user, p_tag, p_cents, p_name)
+                            
                             if ok:
+                                # --- MODO DEBUG: ISSO VAI MOSTRAR O JSON NA TELA ---
+                                st.write("RESPOSTA DO PAGAR.ME:", res) 
+                                # ---------------------------------------------------
+                                
                                 try:
-                                    charges = res.get('charges', [])[0]
-                                    txn = charges.get('last_transaction', {})
-                                    qr_code_url = txn.get('qr_code_url')
-                                    qr_code_text = txn.get('qr_code')
+                                    charges = res.get('charges', [])
+                                    if not charges:
+                                        st.error("O pedido foi criado, mas não houve cobrança gerada. Verifique os dados do cliente.")
+                                        st.stop()
+                                        
+                                    last_txn = charges[0].get('last_transaction', {})
+                                    
+                                    # Tenta pegar o QR Code
+                                    qr_code_url = last_txn.get('qr_code_url')
+                                    qr_code_text = last_txn.get('qr_code')
+                                    
+                                    # Se não tiver URL, mostra o status do erro
+                                    if not qr_code_url:
+                                        status_txn = last_txn.get('status')
+                                        gateway_resp = last_txn.get('gateway_response', {})
+                                        st.error(f"Falha na transação. Status: {status_txn}")
+                                        st.error(f"Motivo: {gateway_resp.get('errors')}")
+                                        st.stop()
+
                                     order_id = res.get('id')
                                     
                                     st.session_state.payment_pending = True
@@ -1365,9 +1385,11 @@ elif menu == "Assinatura":
                                     st.session_state.payment_plan_selected = p_tag
                                     st.rerun()
                                 except Exception as e:
-                                    st.error(f"Erro ao processar resposta do pagamento: {e}")
+                                    st.error(f"Erro ao processar dados: {e}")
                             else:
-                                st.error(f"Erro ao criar pedido: {res}")
+                                # Se deu erro 400/500, mostra aqui
+                                st.error("Erro na API Pagar.me:")
+                                st.code(res) # Mostra o erro detalhado
 
     # SE TIVER PAGAMENTO PENDENTE (MANTÉM A MESMA LÓGICA ANTERIOR)
     else:
