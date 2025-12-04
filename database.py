@@ -12,6 +12,10 @@ import re
 import pandas as pd
 import string 
 import random
+# --- NOVOS IMPORTS NECESSÁRIOS PARA O PAGAR.ME ---
+import base64    # <--- O ERRO ESTÁ AQUI (FALTAVA ESTE)
+import requests  # <--- E ESTE TAMBÉM
+import json
 
 # --- CONFIGURAÇÃO ---
 BUCKET_NAME = "urbano-licita.firebasestorage.app" 
