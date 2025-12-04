@@ -1307,15 +1307,13 @@ elif menu == "📅 Calendário":
             if pdf: 
                 st.download_button("⬇️ Baixar PDF da Análise", data=pdf, file_name="analise_completa.pdf")
 
-# 6. ASSINATURA (COM PAGAR.ME)
+# 6. ASSINATURA (COM PAGBANK)
 elif menu == "Assinatura":
     st.title("💎 Planos & Assinaturas")
     
-    # Mostra status atual
     st.info(f"Seu Plano Atual: **{PLAN_MAP.get(user['plan'], user['plan']).upper()}** | Créditos Disponíveis: {user['credits']}")
     
-    # --- LISTA ATUALIZADA COM OS NOVOS VALORES ---
-    # Estrutura: ("Nome Tela", "Tag Interna", "Texto Valor", Valor em Centavos, Qtd Créditos)
+    # LISTA DE PLANOS
     plans_data = [
         ("🥉 Plano 15", "plano_15", "R$ 29,90", 2990, 15),
         ("🥈 Plano 30", "plano_30", "R$ 54,90", 5490, 30),
@@ -1323,126 +1321,115 @@ elif menu == "Assinatura":
         ("💎 Plano 90", "plano_90", "R$ 125,90", 12590, 90),
         ("♾️ Ilimitado (30 Dias)", "unlimited_30", "R$ 229,90", 22990, 999999)
     ]
-    # ---------------------------------------------
 
-    # Variáveis de Estado para controlar o fluxo de pagamento na mesma tela
     if "payment_pending" not in st.session_state: st.session_state.payment_pending = False
     if "payment_data" not in st.session_state: st.session_state.payment_data = {}
     if "payment_plan_selected" not in st.session_state: st.session_state.payment_plan_selected = None
 
-    # SE NÃO TIVER PAGAMENTO PENDENTE, MOSTRA OS CARDS
+    # --- TELA DE SELEÇÃO ---
     if not st.session_state.payment_pending:
-        st.write("Escolha o pacote ideal para sua empresa:")
+        st.write("Escolha o pacote ideal:")
         cols = st.columns(len(plans_data)) if len(plans_data) <= 4 else st.columns(3)
         
         for i, (p_name, p_tag, p_price, p_cents, p_credits) in enumerate(plans_data):
-            # Lógica para quebrar colunas se tiver muitos planos
             col = cols[i % 3] 
             with col:
                 with st.container(border=True):
                     st.markdown(f"### {p_name}")
-                    st.markdown(f"<h2 style='color: #28a745;'>{p_price}</h2>", unsafe_allow_html=True)
-                    st.caption(f"Liberado imediatamente após PIX.")
+                    st.markdown(f"<h2 style='color: #0077ff;'>{p_price}</h2>", unsafe_allow_html=True)
+                    st.caption("Liberação Automática via PagBank")
                     
                     if st.button(f"Comprar {p_name}", key=f"btn_buy_{i}", use_container_width=True):
-                        with st.spinner("Gerando PIX..."):
-                            ok, res = db.create_pagarme_order(user, p_tag, p_cents, p_name)
+                        with st.spinner("Conectando ao PagBank..."):
+                            # Chama função do PagBank
+                            ok, res = db.create_pagbank_order(user, p_tag, p_cents, p_name)
                             
                             if ok:
-                                # --- MODO DEBUG: ISSO VAI MOSTRAR O JSON NA TELA ---
-                                st.write("RESPOSTA DO PAGAR.ME:", res) 
-                                # ---------------------------------------------------
-                                
                                 try:
-                                    charges = res.get('charges', [])
-                                    if not charges:
-                                        st.error("O pedido foi criado, mas não houve cobrança gerada. Verifique os dados do cliente.")
+                                    # LÓGICA DE EXTRAÇÃO ESPECÍFICA DO PAGBANK
+                                    qr_codes = res.get('qr_codes', [])
+                                    if not qr_codes:
+                                        st.error("Erro: PagBank não retornou QR Code.")
                                         st.stop()
-                                        
-                                    last_txn = charges[0].get('last_transaction', {})
                                     
-                                    # Tenta pegar o QR Code
-                                    qr_code_url = last_txn.get('qr_code_url')
-                                    qr_code_text = last_txn.get('qr_code')
+                                    # PagBank devolve links dentro do objeto qr_code
+                                    links = qr_codes[0].get('links', [])
                                     
-                                    # Se não tiver URL, mostra o status do erro
-                                    if not qr_code_url:
-                                        status_txn = last_txn.get('status')
-                                        gateway_resp = last_txn.get('gateway_response', {})
-                                        st.error(f"Falha na transação. Status: {status_txn}")
-                                        st.error(f"Motivo: {gateway_resp.get('errors')}")
-                                        st.stop()
-
+                                    qr_image = None
+                                    qr_text = qr_codes[0].get('text') # Copia e Cola fica aqui
+                                    
+                                    # Procura o link da imagem (rel="QRCODE.PNG")
+                                    for link in links:
+                                        if link.get('rel') == 'QRCODE.PNG':
+                                            qr_image = link.get('href')
+                                            break
+                                    
                                     order_id = res.get('id')
                                     
                                     st.session_state.payment_pending = True
                                     st.session_state.payment_data = {
-                                        "qr_url": qr_code_url,
-                                        "qr_text": qr_code_text,
+                                        "qr_url": qr_image,
+                                        "qr_text": qr_text,
                                         "order_id": order_id,
                                         "amount": p_price
                                     }
                                     st.session_state.payment_plan_selected = p_tag
                                     st.rerun()
+                                    
                                 except Exception as e:
-                                    st.error(f"Erro ao processar dados: {e}")
+                                    st.error(f"Erro ao processar resposta: {e}")
+                                    st.write(res) # Debug se der erro
                             else:
-                                # Se deu erro 400/500, mostra aqui
-                                st.error("Erro na API Pagar.me:")
-                                st.code(res) # Mostra o erro detalhado
+                                st.error("Erro na comunicação com PagBank:")
+                                st.json(res)
 
-    # SE TIVER PAGAMENTO PENDENTE (MANTÉM A MESMA LÓGICA ANTERIOR)
+    # --- TELA DE CHECKOUT ---
     else:
         st.markdown("---")
         c1, c2 = st.columns([1, 1])
-        
         pay_dat = st.session_state.payment_data
         
         with c1:
-            st.subheader("Pagamento via PIX")
+            st.subheader("Pagamento via PIX (PagBank)")
             st.write(f"Valor: **{pay_dat['amount']}**")
-            st.info("Abra o aplicativo do seu banco e escaneie o QR Code.")
             
+            # Exibe QR Code
             if pay_dat.get('qr_url'):
-                st.image(pay_dat['qr_url'], width=250)
+                st.image(pay_dat['qr_url'], width=250, caption="Scan me")
+            else:
+                st.warning("Imagem do QR não disponível, use o código abaixo.")
             
-            st.text_area("Ou copie e cole o código abaixo:", pay_dat.get('qr_text'), height=100)
+            st.text_area("Copia e Cola:", pay_dat.get('qr_text'), height=100)
             
-            if st.button("❌ Cancelar / Voltar"):
+            if st.button("❌ Cancelar"):
                 st.session_state.payment_pending = False
                 st.session_state.payment_data = {}
                 st.rerun()
 
         with c2:
-            st.subheader("Já pagou?")
-            st.write("O sistema verifica automaticamente, mas você pode forçar a verificação abaixo.")
-            
-            if st.button("🔄 JÁ PAGUEI / VERIFICAR AGORA", type="primary", use_container_width=True):
-                with st.spinner("Consultando banco..."):
-                    status = db.check_pagarme_order_status(pay_dat['order_id'])
+            st.subheader("Confirmação")
+            if st.button("🔄 JÁ PAGUEI", type="primary", use_container_width=True):
+                with st.spinner("Verificando no PagBank..."):
+                    status = db.check_pagbank_order_status(pay_dat['order_id'])
                     
                     if status == 'paid':
                         target_plan = st.session_state.payment_plan_selected
                         
+                        # Define validade se ilimitado
                         expiration = None
                         if target_plan == 'unlimited_30':
                             expiration = datetime.now() + timedelta(days=30)
                             
+                        # Atualiza no Banco
                         db.admin_update_plan(user['username'], target_plan, expires_at=expiration)
                         db.admin_set_credits_used(user['username'], 0)
                         
                         st.balloons()
-                        st.success("✅ Pagamento Confirmado! Seu plano foi ativado.")
+                        st.success("✅ Pagamento Aprovado! Plano Ativado.")
                         
                         st.session_state.payment_pending = False
                         st.session_state.payment_data = {}
                         time.sleep(3)
                         st.rerun()
-                        
-                    elif status == 'failed' or status == 'canceled':
-                        st.error("O pagamento falhou ou foi cancelado.")
                     else:
-                        st.warning("O pagamento ainda não foi confirmado pelo banco. Aguarde alguns instantes e tente novamente.")
-
-            time.sleep(1) 
-            st.caption("Aguardando confirmação...")
+                        st.warning(f"Pagamento ainda não confirmado. Status: {status}")
