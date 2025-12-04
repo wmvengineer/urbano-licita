@@ -551,6 +551,10 @@ def create_pagbank_order(user_dict, plan_tag, amount_cents, plan_name):
     """
     Cria um pedido PIX na API PagBank.
     """
+    # Verifica se as secrets existem para evitar erro genérico
+    if "PAGBANK" not in st.secrets:
+        return False, "Configuração PAGBANK não encontrada nos Secrets."
+
     base_url = st.secrets["PAGBANK"]["BASE_URL"]
     token = st.secrets["PAGBANK"]["TOKEN"]
     
@@ -562,22 +566,18 @@ def create_pagbank_order(user_dict, plan_tag, amount_cents, plan_name):
         "accept": "application/json"
     }
 
-    # Tratamento de Telefone (PagBank é chato com formato)
-    # Tenta pegar do usuário ou usa um fixo válido para garantir a emissão
+    # Tratamento simples de telefone e CPF
     phone_raw = "11999999999"
     area = phone_raw[:2]
     number = phone_raw[2:]
 
-    # Tratamento CPF/CNPJ (Remove pontuação)
     raw_doc = str(user_dict.get('cnpj', '')).strip()
     tax_id = "".join(filter(str.isdigit, raw_doc))
     
-    # Fallback para Sandbox (se estiver vazio ou zerado, usa um CPF válido de teste)
     if not tax_id or len(tax_id) < 11 or tax_id == "00000000000":
         tax_id = "19707565000131" # CNPJ de teste
 
-    # Define expiração do PIX (1 hora a partir de agora)
-    # Formato PagBank: YYYY-MM-DDTHH:MM:SS-FZ
+    # Expiração de 1 hora
     expiry_date = (datetime.datetime.now() + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S-03:00")
 
     payload = {
@@ -600,7 +600,7 @@ def create_pagbank_order(user_dict, plan_tag, amount_cents, plan_name):
                 "reference_id": plan_tag,
                 "name": plan_name,
                 "quantity": 1,
-                "unit_amount": amount_cents # PagBank também usa centavos
+                "unit_amount": amount_cents
             }
         ],
         "qr_codes": [
@@ -624,8 +624,10 @@ def create_pagbank_order(user_dict, plan_tag, amount_cents, plan_name):
 
 def check_pagbank_order_status(order_id):
     """
-    Verifica se o pedido PagBank foi pago.
+    Verifica status do pedido PagBank.
     """
+    if "PAGBANK" not in st.secrets: return None
+
     base_url = st.secrets["PAGBANK"]["BASE_URL"]
     token = st.secrets["PAGBANK"]["TOKEN"]
     
@@ -640,17 +642,13 @@ def check_pagbank_order_status(order_id):
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             data = response.json()
-            # PagBank retorna uma lista de 'charges' ou 'qr_codes'
-            # Verificamos o status geral ou das cobranças
             
-            # Verifica status das cobranças (charges) se houver
+            # Verifica status das cobranças
             charges = data.get('charges', [])
             if charges:
                 if any(c.get('status') == 'PAID' for c in charges):
                     return 'paid'
             
-            # Se foi criado via qr_codes direto, verificamos o status do order
-            # O status do pedido pago no PagBank geralmente é 'PAID'
             if data.get('status') == 'PAID':
                 return 'paid'
                 
