@@ -69,8 +69,24 @@ def init_db():
 def register_user(username, name, email, password, company_name, cnpj):
     try:
         users_ref = db.collection('users')
+        
+        # 1. Verifica se o Username (ID) já existe
         if users_ref.document(username).get().exists:
             return False, "Nome de usuário já existe."
+        
+        # 2. Verifica se o E-mail já está em uso (Bloqueia duplicidade)
+        # O uso de .limit(1) torna a consulta mais eficiente, parando no primeiro match
+        email_query = users_ref.where('email', '==', email).limit(1).stream()
+        for _ in email_query:
+            return False, "Este e-mail já possui cadastro no sistema."
+
+        # 3. Verifica se o CNPJ já está em uso (Bloqueia duplicidade)
+        if cnpj:
+            # Remove pontuações básicas para evitar burlar com formatações diferentes (opcional, mas recomendado)
+            # Se preferir manter a verificação exata da string digitada, mantenha apenas a query abaixo
+            cnpj_query = users_ref.where('cnpj', '==', cnpj).limit(1).stream()
+            for _ in cnpj_query:
+                return False, "Este CNPJ já está vinculado a uma conta."
         
         hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         users_ref.document(username).set({
@@ -95,21 +111,26 @@ def login_user(login_input, password):
     try:
         users_ref = db.collection('users')
         
-        # 1. Tenta buscar pelo Username (ID do documento)
+        # 1. Tenta buscar pelo Username
         doc = users_ref.document(login_input).get()
         
-        # 2. Se não achar pelo ID, tenta buscar pelo campo Email
+        # 2. Se não achar, busca pelo Email
         if not doc.exists:
             query = users_ref.where('email', '==', login_input).stream()
             for q in query:
                 doc = q
-                break # Pega o primeiro encontrado
+                break 
 
         if doc.exists:
             d = doc.to_dict()
-            stored_hash = d.get('password_hash', '')
             
-            # Recupera o username real do documento (caso o login tenha sido por email)
+            # --- NOVO: VERIFICAÇÃO DE CONTA EXCLUÍDA ---
+            if d.get('is_deleted', False):
+                reason = d.get('deletion_reason', 'Violação de Termos.')
+                return False, f"CONTA SUSPENSA/EXCLUÍDA. Motivo: {reason}"
+            # -------------------------------------------
+
+            stored_hash = d.get('password_hash', '')
             real_username = doc.id 
             
             password_ok = False
@@ -120,7 +141,6 @@ def login_user(login_input, password):
                 token = d.get('session_token', '')
                 if password != "ignorar_senha_aqui":
                     token = secrets.token_hex(16)
-                    # Atualiza usando o username real (ID do documento)
                     users_ref.document(real_username).update({'session_token': token})
                 
                 return True, {
@@ -132,10 +152,11 @@ def login_user(login_input, password):
                     "role": d.get('role', 'user'),
                     "plan_type": d.get('plan_type', 'free'),
                     "credits_used": d.get('credits_used', 0),
-                    "token": token
+                    "token": token,
+                    "plan_expires_at": d.get('plan_expires_at')
                 }
-        return False, None
-    except: return False, None
+        return False, "Usuário ou senha incorretos."
+    except Exception as e: return False, str(e)
 
 def check_session_valid(username, current_token):
     try:
@@ -188,7 +209,16 @@ def recover_user_password(email):
 # --- SISTEMA DE CRÉDITOS ---
 
 def get_plan_limit(plan_type):
-    limits = {'free': 5, 'plano_15': 15, 'plano_30': 30, 'plano_60': 60, 'plano_90': 90, 'unlimited': 999999}
+    limits = {
+        'free': 5, 
+        'plano_15': 15, 
+        'plano_30': 30, 
+        'plano_60': 60, 
+        'plano_90': 90, 
+        'unlimited': 999999,
+        'unlimited_30': 999999, # Novo: Ilimitado temporário
+        'expired': 0            # Novo: Expirado (bloqueado)
+    }
     return limits.get(plan_type, 5)
 
 def consume_credit_atomic(username):
@@ -292,17 +322,24 @@ def admin_get_users_stats():
                 'username': d['username'],
                 'name': d['name'],
                 'company_name': d.get('company_name', '-'),
+                'cnpj': d.get('cnpj', '-'), # NOVO
                 'email': d.get('email', '-'),
                 'plan': d.get('plan_type', 'free'),
                 'credits': d.get('credits_used', 0),
-                'joined': d.get('created_at', datetime.datetime.now())
+                'joined': d.get('created_at', datetime.datetime.now()),
+                'is_deleted': d.get('is_deleted', False),        # NOVO
+                'deletion_reason': d.get('deletion_reason', '')  # NOVO
             })
         return data
     except: return []
 
-def admin_update_plan(username, new_plan):
+def admin_update_plan(username, new_plan, expires_at=None):
     try:
-        db.collection('users').document(username).update({'plan_type': new_plan})
+        data = {'plan_type': new_plan}
+        if expires_at:
+            data['plan_expires_at'] = expires_at
+        
+        db.collection('users').document(username).update(data)
         return True
     except: return False
 
@@ -311,6 +348,26 @@ def admin_set_credits_used(username, new_amount):
         val = int(new_amount)
         if val < 0: val = 0
         db.collection('users').document(username).update({'credits_used': val})
+        return True
+    except: return False
+    
+def admin_ban_user(username, reason):
+    """Marca o usuário como excluído e salva o motivo."""
+    try:
+        db.collection('users').document(username).update({
+            'is_deleted': True,
+            'deletion_reason': reason
+        })
+        return True
+    except: return False
+
+def admin_restore_user(username):
+    """Restaura o usuário e limpa o motivo."""
+    try:
+        db.collection('users').document(username).update({
+            'is_deleted': False,
+            'deletion_reason': firestore.DELETE_FIELD
+        })
         return True
     except: return False
 

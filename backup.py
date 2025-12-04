@@ -12,6 +12,18 @@ from io import BytesIO
 import random
 import base64 
 
+# --- MAPA DE NOMES DE PLANOS (NOVOS REQUISITOS) ---
+PLAN_MAP = {
+    'unlimited': 'Nível Administrador',
+    'free': 'Teste Gratuito',
+    'plano_15': 'Plano 15 análises',
+    'plano_30': 'Plano 30 análises',
+    'plano_60': 'Plano 60 análises',
+    'plano_90': 'Plano 90 análises',
+    'unlimited_30': 'Ilimitado - 30 DIAS',
+    'expired': 'Expirado'
+}
+
 # --- LIBS PARA PDF E CALENDÁRIO ---
 from xhtml2pdf import pisa
 import markdown
@@ -404,6 +416,7 @@ if not st.session_state.user:
                                 time.sleep(2) 
 
                 elif submitted_login:
+                    # 1. Verifica o Captcha
                     real_ans = st.session_state.log_n1 + st.session_state.log_n2
                     if captcha_ans != real_ans:
                         st.error("eCaptcha incorreto.")
@@ -412,25 +425,36 @@ if not st.session_state.user:
                         time.sleep(1)
                         st.rerun()
                     else:
-                        ok, d = db.login_user(u, p)
+                        # 2. Tenta fazer o login
+                        # 'response' pode ser o dicionário do usuário (Sucesso) ou uma string de erro (Falha/Banido)
+                        ok, response = db.login_user(u, p) 
+                        
                         if ok:
+                            d = response
                             st.session_state.user = {
                                 "username": d.get('username'), "name": d.get('name'),
                                 "role": d.get('role'), "plan": d.get('plan_type', 'free'),
                                 "credits": d.get('credits_used', 0), "token": d.get('token'),
-                                "company_name": d.get('company_name', ''),
-                                "cnpj": d.get('cnpj', '')
+                                "company_name": d.get('company_name', ''), "cnpj": d.get('cnpj', ''),
+                                "plan_expires_at": d.get('plan_expires_at')
                             }
+                            # Define o cookie para manter logado
                             cookie_manager.set("urbano_auth", f"{u}|{d['token']}", expires_at=datetime.now()+timedelta(days=5))
                             st.rerun()
-                        else: st.error("Erro no login.")
+                        else: 
+                            # 3. Exibe o erro retornado pelo banco (Senha errada ou Motivo da Exclusão)
+                            st.error(response if response else "Erro no login.")
+                
+                # --- AQUI ESTAVA O ERRO: O bloco 'elif sub_log:' foi removido ---
         
         # --- ABA CADASTRO (ATUALIZADA) ---
         with t2:
             with st.form("f_cad"):
                 # Novos Campos no Início
                 nc_empresa = st.text_input("Nome da Empresa", placeholder="Razão Social")
-                nc_cnpj = st.text_input("CNPJ", placeholder="00.000.000/0000-00")
+                
+                # ALTERAÇÃO 1: Campo configurado para sugerir apenas números e limitar a 14 digitos
+                nc_cnpj = st.text_input("CNPJ (Somente Números)", placeholder="Ex: 12345678000190", max_chars=14)
 
                 nu = st.text_input("Usuário", placeholder="Escolha um usuário")
                 nn = st.text_input("Nome", placeholder="Seu nome completo")
@@ -445,17 +469,27 @@ if not st.session_state.user:
 
                 if st.form_submit_button("CADASTRAR"):
                     real_cad_ans = st.session_state.cad_n1 + st.session_state.cad_n2
+                    
+                    # 1. Valida Captcha
                     if cad_captcha_ans != real_cad_ans:
                         st.error("eCaptcha incorreto.")
                         st.session_state.cad_n1 = random.randint(1, 9)
                         st.session_state.cad_n2 = random.randint(1, 9)
                         time.sleep(1)
                         st.rerun()
+                    
+                    # ALTERAÇÃO 2: Valida se o CNPJ contém apenas números
+                    elif not nc_cnpj.isdigit():
+                        st.error("O CNPJ deve ser preenchido estritamente com números (sem pontos, barras ou traços).")
+                    
+                    # 3. Prossegue com o cadastro
                     else:
-                        # Chamada atualizada com empresa e cnpj
                         ok, m = db.register_user(nu, nn, ne, np, nc_empresa, nc_cnpj)
-                        if ok: st.success("Criado! Faça login com seu e-mail e senha cadastrados."); time.sleep(1)
-                        else: st.error(m)
+                        if ok: 
+                            st.success("Criado! Faça login com seu e-mail e senha cadastrados.")
+                            time.sleep(1)
+                        else: 
+                            st.error(m)
     st.stop()
 
 # --- ÁREA LOGADA ---
@@ -471,6 +505,19 @@ if fresh:
     user['plan'] = fresh.get('plan_type', 'free')
     limit = db.get_plan_limit(user['plan'])
 else: logout()
+
+# --- LÓGICA DE VENCIMENTO DO PLANO (NOVO) ---
+# Se for unlimited_30, verificamos a data. Se passou, muda para 'expired'
+if user['plan'] == 'unlimited_30':
+    expires = user.get('plan_expires_at')
+    if expires:
+        # Verifica se a data atual já passou da data de expiração
+        # Removemos timezone para comparar com datetime.now() simples
+        if expires.replace(tzinfo=None) < datetime.now():
+            db.admin_update_plan(user['username'], 'expired')
+            st.toast("Seu plano de 30 dias expirou.")
+            time.sleep(2)
+            st.rerun()
 
 # --- CSS PARA A SIDEBAR (Barra Lateral) ---
 st.markdown("""
@@ -530,11 +577,24 @@ with st.sidebar:
         st.caption(f"CNPJ: {user['cnpj']}")
         
     st.markdown(f"### Olá, {user['name']}")
-    st.caption(f"Plano: **{user['plan'].upper()}**")
+    # Exibição do Nome do Plano Mapeado
+    plan_display = PLAN_MAP.get(user['plan'], user['plan'])
+    st.caption(f"Plano: **{plan_display}**")
+    
+    # NOVO: Contador de Dias (Apenas para Unlimited 30)
+    if user['plan'] == 'unlimited_30' and user.get('plan_expires_at'):
+        exp = user['plan_expires_at'].replace(tzinfo=None)
+        days_left = (exp - datetime.now()).days
+        if days_left < 0: days_left = 0
+        
+        # Exibe em amarelo chamativo
+        st.markdown(f"<p style='color:#FFDD00; font-weight:bold;'>⏳ Restam: {days_left} dias</p>", unsafe_allow_html=True)
+
+    # Barra de progresso (Mantenha o código original abaixo disso)
     pct = min(user['credits']/limit, 1.0) if limit > 0 else 1.0
     st.progress(pct)
     st.write(f"Análises: {user['credits']} / {limit}")
-    if user['credits'] >= limit and limit < 9999: st.error("Limite atingido!")
+    if user['credits'] >= limit and limit < 999990: st.error("Limite atingido!")
 
     st.divider()
     menu = st.radio("Menu", ["Análise de Editais", "📅 Calendário", "📂 Documentos da Empresa", "📜 Histórico", "Assinatura"])
@@ -549,109 +609,148 @@ with st.sidebar:
 # 1. ADMIN
 if menu == "Admin":
     st.title("🔧 Gestão Administrativa")
+    
+    # Busca dados atualizados do banco
     stats = db.admin_get_users_stats()
-    df = pd.DataFrame(stats)
+    df_raw = pd.DataFrame(stats)
     
-    # Lista oficial de planos conforme salvo no Banco de Dados
-    valid_plans = ['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited']
+    # Definição dos planos disponíveis para o Selectbox
+    valid_plans = ['free', 'plano_15', 'plano_30', 'plano_60', 'plano_90', 'unlimited_30', 'unlimited', 'expired']
     
-    if not df.empty:
+    if not df_raw.empty:
+        # Separa Ativos e Excluídos
+        df_active = df_raw[df_raw['is_deleted'] == False].copy()
+        df_deleted = df_raw[df_raw['is_deleted'] == True].copy()
+        
+        # --- MÉTRICAS ---
         k1, k2, k3 = st.columns(3)
-        k1.metric("Usuários", len(df))
-        k2.metric("Análises", df['credits'].sum() if 'credits' in df.columns else 0)
+        k1.metric("Usuários Ativos", len(df_active))
+        k2.metric("Usuários Excluídos", len(df_deleted))
+        k3.metric("Análises (Total)", df_raw['credits'].sum() if 'credits' in df_raw.columns else 0)
         
         st.divider()
-        c_search, c_clear = st.columns([0.8, 0.2])
-        search_term = c_search.text_input("🔍 Pesquisar", placeholder="Nome ou Email...")
+
+        # --- SEÇÃO: BASE DE USUÁRIOS ATIVOS ---
+        st.subheader(f"👥 Base de Usuários Ativos ({len(df_active)})")
         
-        if search_term:
-            mask = df['username'].astype(str).str.contains(search_term, case=False) | \
-                   df['name'].astype(str).str.contains(search_term, case=False)
-            df_display = df[mask]
-        else:
-            df_display = df
-
-        st.subheader("Base de Usuários")
+        # Campo de busca simples
+        search = st.text_input("🔍 Buscar Usuário", placeholder="Nome, E-mail ou CNPJ...")
         
-        # Correção: As opções do SelectboxColumn devem bater com o que existe no banco (free, unlimited, etc)
-        edited_df = st.data_editor(
-            df_display,
-            column_config={
-                "username": st.column_config.TextColumn("Usuário", disabled=True),
-                "credits": st.column_config.NumberColumn("Usados", disabled=True),
-                "plan": st.column_config.SelectboxColumn("Plano", options=valid_plans, required=True)
-            },
-            hide_index=True, use_container_width=True, key="users_editor"
-        )
+        # Cabeçalho da Tabela Customizada
+        # Layout: [Info Usuário (3)] [Data Cadastro (1.5)] [Editar Plano (2)] [Ações (1)]
+        h1, h2, h3, h4 = st.columns([3, 1.5, 2, 1])
+        h1.markdown("**Usuário / Empresa**")
+        h2.markdown("**Cadastro**")
+        h3.markdown("**Plano Atual**")
+        h4.markdown("**Excluir**")
+        st.markdown("---")
 
-        if st.button("💾 Salvar Planos"):
-            count = 0
-            for i, row in edited_df.iterrows():
-                orig = df[df['username']==row['username']].iloc[0]
-                if orig['plan'] != row['plan']:
-                    db.admin_update_plan(row['username'], row['plan']); count+=1
-            if count: st.success(f"{count} atualizados!"); time.sleep(1); st.rerun()
+        for index, row in df_active.iterrows():
+            # Filtro de busca
+            search_str = f"{row['name']} {row['username']} {row['email']} {row['cnpj']}".lower()
+            if search and search.lower() not in search_str:
+                continue
 
-        st.divider()
-        st.subheader("🛠️ Gestão Individual")
-        col_sel, col_act = st.columns([0.4, 0.6])
-        with col_sel:
-            sel_user = st.selectbox("Editar Usuário:", options=df_display['username'].tolist())
-            if sel_user:
-                u_info = df[df['username'] == sel_user].iloc[0]
-                st.info(f"Plano: {u_info['plan']} | Usados: {u_info['credits']}")
-        with col_act:
-            if sel_user:
-                # Correção: Try/Except para garantir que o index exista e o botão apareça
-                with st.form("edit_cred"):
-                    nc = st.number_input("Definir 'Créditos Usados':", min_value=0, value=int(u_info['credits']))
+            with st.container():
+                c1, c2, c3, c4 = st.columns([3, 1.5, 2, 1])
+                
+                # COLUNA 1: Identificação
+                with c1:
+                    st.write(f"**{row['name']}**")
+                    st.caption(f"📧 {row['email']} | 🏢 {row['cnpj']}")
+                    st.caption(f"👤 {row['username']} | Créditos: {row['credits']}")
+
+                # COLUNA 2: Data e Hora de Cadastro (RESTAURADO)
+                with c2:
+                    if row['joined']:
+                        # Formata a data para dia/mês/ano hora:minuto
+                        try:
+                            dt_str = row['joined'].strftime("%d/%m/%Y\n%H:%M")
+                            st.write(dt_str)
+                        except:
+                            st.write("-")
+                    else:
+                        st.write("-")
+
+                # COLUNA 3: Mudar Plano Manualmente (RESTAURADO)
+                with c3:
+                    current_plan_code = row['plan']
+                    # Garante que o plano atual esteja na lista, senão usa padrão
+                    idx = valid_plans.index(current_plan_code) if current_plan_code in valid_plans else 0
                     
-                    # Tenta achar o índice do plano atual na lista válida
-                    try:
-                        current_index = valid_plans.index(u_info['plan'])
-                    except ValueError:
-                        current_index = 0 # Se não achar (ex: admin antigo), joga para 'free'
+                    # Selectbox com callback instantâneo ou verificação manual
+                    new_plan = st.selectbox(
+                        "Alterar Plano",
+                        options=valid_plans,
+                        index=idx,
+                        key=f"sel_plan_{row['username']}",
+                        format_func=lambda x: PLAN_MAP.get(x, x), # Mostra nome amigável
+                        label_visibility="collapsed"
+                    )
                     
-                    np = st.selectbox("Plano:", valid_plans, index=current_index)
-                    
-                    # O botão está dentro do form, identado corretamente
-                    if st.form_submit_button("✅ Atualizar"):
-                        db.admin_set_credits_used(sel_user, nc)
-                        db.admin_update_plan(sel_user, np)
-                        st.toast("Atualizado!"); time.sleep(1); st.rerun()
+                    # Se mudou, salva no banco
+                    if new_plan != current_plan_code:
+                        expiration = None
+                        if new_plan == 'unlimited_30':
+                            expiration = datetime.now() + timedelta(days=30)
                         
-                if st.button("🔄 Resetar Créditos (Zero)"):
-                    db.admin_set_credits_used(sel_user, 0)
-                    st.toast("Resetado!"); time.sleep(1); st.rerun()
-        st.divider()
-        st.subheader("📧 Central de Notificações")
-        
-        col_test, col_run = st.columns(2)
-        
-        with col_test:
-            st.markdown("#### Teste de SMTP")
-            test_email = st.text_input("E-mail para teste", value=st.session_state.user['email'] if st.session_state.user.get('email') else "")
-            if st.button("📨 Enviar E-mail de Teste"):
-                if test_email:
-                    with st.spinner("Conectando ao Zoho..."):
-                        ok, msg = db.send_email(
-                            test_email, 
-                            "Teste de SMTP - Urbano", 
-                            "<h1>Funciona!</h1><p>Seu sistema de e-mail está configurado corretamente.</p>"
-                        )
-                        if ok: st.success(msg)
-                        else: st.error(msg)
-                else:
-                    st.warning("Preencha um e-mail.")
+                        if db.admin_update_plan(row['username'], new_plan, expires_at=expiration):
+                            st.toast(f"Plano de {row['username']} alterado para {PLAN_MAP.get(new_plan, new_plan)}!")
+                            time.sleep(1)
+                            st.rerun()
 
-        with col_run:
-            st.markdown("#### Disparo Manual de Avisos")
-            if st.button("🚀 Rodar Verificação de Prazos"):
-                with st.spinner("Verificando datas e enviando e-mails..."):
-                    log = db.check_deadlines_and_notify()
-                    st.text_area("Log de Execução", value=log, height=200)
+                # COLUNA 4: Botão de Exclusão com Motivo (NOVO)
+                with c4:
+                    # Usa Popover para criar o fluxo de "Botão -> Motivo -> Confirmar"
+                    with st.popover("🗑️", help="Excluir/Banir Usuário"):
+                        st.markdown(f"**Banir {row['username']}?**")
+                        reason_input = st.text_input("Motivo (Obrigatório):", key=f"reason_{row['username']}")
+                        
+                        if st.button("Confirmar Exclusão", key=f"btn_ban_{row['username']}", type="primary"):
+                            if not reason_input.strip():
+                                st.error("Digite um motivo.")
+                            else:
+                                if db.admin_ban_user(row['username'], reason_input):
+                                    st.success("Usuário excluído!")
+                                    time.sleep(1)
+                                    st.rerun()
+                
+                st.divider()
 
-        st.divider()            
+        # --- SEÇÃO: USUÁRIOS EXCLUÍDOS ---
+        if not df_deleted.empty:
+            st.subheader(f"🗑️ Usuários Excluídos ({len(df_deleted)})")
+            
+            # Tabela simples para ver os banidos
+            st.dataframe(
+                df_deleted[['username', 'name', 'deletion_reason', 'joined']],
+                column_config={
+                    "username": "Usuário",
+                    "name": "Nome",
+                    "deletion_reason": "Motivo do Banimento",
+                    "joined": st.column_config.DatetimeColumn("Data Cadastro", format="D/M/Y H:m")
+                },
+                hide_index=True,
+                use_container_width=True
+            )
+
+            # Sistema de Restauração
+            col_res_sel, col_res_btn = st.columns([3, 1])
+            with col_res_sel:
+                user_to_restore = st.selectbox(
+                    "Selecione para Restaurar:", 
+                    df_deleted['username'].tolist(),
+                    key="restore_selectbox"
+                )
+            with col_res_btn:
+                st.write("") # Espaçamento
+                st.write("") 
+                if st.button("♻️ Restaurar Conta"):
+                    if user_to_restore:
+                        db.admin_restore_user(user_to_restore)
+                        st.success(f"Conta de {user_to_restore} reativada!")
+                        time.sleep(1)
+                        st.rerun()         
 
 # 2. DOCUMENTOS
 elif menu == "📂 Documentos da Empresa":
@@ -848,6 +947,9 @@ elif menu == "Análise de Editais":
                         company_ai_files = []
                         
                         try:
+                            # --- ALTERAÇÃO AQUI: Captura o nome da empresa ---
+                            nome_empresa = user.get('company_name', 'Empresa Licitante')
+
                             for n, d in c_files:
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as t:
                                     t.write(d)
@@ -858,12 +960,16 @@ elif menu == "Análise de Editais":
                             
                             all_files = st.session_state.gemini_files_handles + company_ai_files
                             
-                            prompt_cross = """
+                            # --- ALTERAÇÃO AQUI: Prompt atualizado com o nome da empresa ---
+                            prompt_cross = f"""
                             ATUE COMO AUDITOR SÊNIOR E ESPECIALISTA EM ANÁLISE DOCUMENTAL DE ENGENHARIA.
                             
                             CONTEXTO:
                             Você possui acesso aos arquivos do EDITAL (primeiros arquivos) e aos arquivos da EMPRESA (últimos arquivos carregados).
                             Utilize visão computacional para ler documentos digitalizados/imagens.
+                            
+                            ⚠️ DADOS CRITICOS DA ANÁLISE:
+                            NOME DA EMPRESA LICITANTE (USUÁRIO): "{nome_empresa}"
                             
                             DIRETRIZES GERAIS:
                             1. LEITURA EXAUSTIVA: Analise TODOS os documentos fornecidos.
@@ -875,7 +981,8 @@ elif menu == "Análise de Editais":
                                - Analise os itens solicitados vs documentos apresentados.
                             
                             2. **QUALIFICAÇÃO TÉCNICA OPERACIONAL (EMPRESA)**
-                               - Foco: Atestados emitidos em nome da PESSOA JURÍDICA (Empresa).
+                               - Foco: Atestados emitidos EXCLUSIVAMENTE em nome da PESSOA JURÍDICA: "{nome_empresa}".
+                               - Se o atestado estiver em nome de outra empresa (exceto consórcios explicítos), NÃO considere como válido para Operacional.
                                - Liste cada exigência de capacidade da empresa.
                                - Documento Encontrado: Cite o atestado da empresa que atende (lembrando da similaridade técnica).
                                - Status: ✅ APTO / ⚠️ / ❌
@@ -1044,6 +1151,9 @@ elif menu == "📜 Histórico":
                                 st.error("Você não tem documentos na pasta da empresa.")
                             else:
                                 try:
+                                    # --- ALTERAÇÃO AQUI: Captura o nome da empresa ---
+                                    nome_empresa = user.get('company_name', 'Empresa Licitante')
+
                                     temps = []
                                     gemini_files = []
                                     for n, d in c_files:
@@ -1052,6 +1162,7 @@ elif menu == "📜 Histórico":
                                         temps.append(tp)
                                         gemini_files.append(genai.upload_file(tp, display_name=n))
                                     
+                                    # --- ALTERAÇÃO AQUI: Prompt atualizado ---
                                     prompt_hist = f"""
                                     ATUE COMO AUDITOR SÊNIOR DE ENGENHARIA. 
                                     Compare os documentos anexados da empresa com o seguinte resumo de edital:
@@ -1060,6 +1171,9 @@ elif menu == "📜 Histórico":
                                     {content_txt}
                                     --- FIM RESUMO EDITAL ---
                                     
+                                    ⚠️ DADOS DA EMPRESA PARA VALIDAÇÃO:
+                                    Nome/Razão Social: "{nome_empresa}"
+
                                     DIRETRIZES:
                                     1. Analise TODOS os documentos.
                                     2. Aplique FLEXIBILIDADE TÉCNICA (serviços similares são aceitos).
@@ -1067,7 +1181,8 @@ elif menu == "📜 Histórico":
                                     TAREFA: Gere um Checklist de Viabilidade separado nas seguintes categorias OBRIGATÓRIAS:
                                     
                                     A) QUALIFICAÇÃO TÉCNICA OPERACIONAL (EMPRESA)
-                                    - Verifique se a EMPRESA (PJ) possui os atestados exigidos.
+                                    - Verifique se a EMPRESA "{nome_empresa}" (PJ) possui os atestados exigidos.
+                                    - Ignore atestados em nome de terceiros para esta qualificação.
                                     - Item do Edital -> Documento da Empresa -> Veredito.
                                     
                                     B) QUALIFICAÇÃO TÉCNICA PROFISSIONAL (EQUIPE)

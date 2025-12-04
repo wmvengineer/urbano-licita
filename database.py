@@ -539,3 +539,96 @@ def check_deadlines_and_notify():
                 logs.append(f"ℹ️ {username}: {found_greens} verdes analisados, nenhum no prazo (0-2 dias úteis).")
     
     return logs
+
+# --- INTEGRAÇÃO PAGAR.ME ---
+
+def create_pagarme_order(user_dict, plan_tag, amount_cents, plan_name):
+    """
+    Cria um pedido PIX na Pagar.me V5.
+    user_dict: dicionário com dados do usuário (nome, email, cpf/cnpj, etc)
+    plan_tag: identificador interno (ex: 'plano_15')
+    amount_cents: valor em centavos (ex: 3990 para R$ 39,90)
+    """
+    url = "https://api.pagar.me/core/v5/orders"
+    
+    # Autenticação Basic Auth com a Secret Key
+    secret_key = st.secrets["PAGARME"]["SECRET_KEY"] + ":"
+    auth_string = base64.b64encode(secret_key.encode()).decode()
+    
+    headers = {
+        "Authorization": f"Basic {auth_string}",
+        "Content-Type": "application/json"
+    }
+
+    # Tratamento básico de telefone e documento (Pagar.me exige formato limpo)
+    # Aqui estamos usando dados genéricos para evitar erro se o cadastro estiver incompleto,
+    # mas o ideal é solicitar telefone no cadastro.
+    phone = "11999999999" 
+    document = user_dict.get('cnpj', '00000000000').replace('.', '').replace('/', '').replace('-', '')
+    doc_type = "CNPJ" if len(document) > 11 else "CPF"
+    if not document or len(document) < 11: 
+        document = "00000000000" # Fallback
+
+    payload = {
+        "customer": {
+            "name": user_dict.get('name', 'Cliente Urbano'),
+            "email": user_dict.get('email'),
+            "document": document,
+            "type": "individual" if doc_type == "CPF" else "company", 
+            "phones": {
+                "mobile_phone": {
+                    "country_code": "55",
+                    "area_code": phone[:2],
+                    "number": phone[2:]
+                }
+            }
+        },
+        "items": [
+            {
+                "amount": amount_cents,
+                "description": f"Assinatura Urbano - {plan_name}",
+                "quantity": 1,
+                "code": plan_tag
+            }
+        ],
+        "payments": [
+            {
+                "payment_method": "pix",
+                "pix": {
+                    "expires_in": 3600 # QR Code vale por 1 hora
+                }
+            }
+        ]
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code == 200:
+            return True, response.json()
+        else:
+            return False, response.text
+    except Exception as e:
+        return False, str(e)
+
+def check_pagarme_order_status(order_id):
+    """
+    Verifica se o pedido foi pago.
+    Retorna: 'paid', 'pending', 'failed' ou None se erro.
+    """
+    url = f"https://api.pagar.me/core/v5/orders/{order_id}"
+    secret_key = st.secrets["PAGARME"]["SECRET_KEY"] + ":"
+    auth_string = base64.b64encode(secret_key.encode()).decode()
+    
+    headers = {
+        "Authorization": f"Basic {auth_string}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('status') # Ex: 'paid', 'pending'
+        return None
+    except:
+        return None

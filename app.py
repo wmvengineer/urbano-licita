@@ -1307,14 +1307,120 @@ elif menu == "📅 Calendário":
             if pdf: 
                 st.download_button("⬇️ Baixar PDF da Análise", data=pdf, file_name="analise_completa.pdf")
 
-# 6. ASSINATURA
+# 6. ASSINATURA (COM PAGAR.ME)
 elif menu == "Assinatura":
-    st.title("💎 Planos")
-    st.info(f"Plano Atual: **{user['plan'].upper()}**")
-    cols = st.columns(4)
-    plans = [("🥉 Plano 15", "15 Editais", "R$ 39,90"), ("🥈 Plano 30", "30 Editais", "R$ 69,90"), 
-             ("🥇 Plano 60", "60 Editais", "R$ 109,90"), ("💎 Plano 90", "90 Editais", "R$ 149,90")]
-    for i, (n, q, v) in enumerate(plans):
-        with cols[i]:
-            st.markdown(f"### {n}\n**{q}**\n### {v}"); st.button(f"Assinar {n}", key=f"b_{i}")
-    st.markdown("---"); st.caption("Envie comprovante para o Suporte.")
+    st.title("💎 Planos & Assinaturas")
+    
+    # Mostra status atual
+    st.info(f"Seu Plano Atual: **{PLAN_MAP.get(user['plan'], user['plan']).upper()}** | Créditos Disponíveis: {user['credits']}")
+    
+    # --- LISTA ATUALIZADA COM OS NOVOS VALORES ---
+    # Estrutura: ("Nome Tela", "Tag Interna", "Texto Valor", Valor em Centavos, Qtd Créditos)
+    plans_data = [
+        ("🥉 Plano 15", "plano_15", "R$ 29,90", 2990, 15),
+        ("🥈 Plano 30", "plano_30", "R$ 54,90", 5490, 30),
+        ("🥇 Plano 60", "plano_60", "R$ 96,90", 9690, 60),
+        ("💎 Plano 90", "plano_90", "R$ 125,90", 12590, 90),
+        ("♾️ Ilimitado (30 Dias)", "unlimited_30", "R$ 229,90", 22990, 999999)
+    ]
+    # ---------------------------------------------
+
+    # Variáveis de Estado para controlar o fluxo de pagamento na mesma tela
+    if "payment_pending" not in st.session_state: st.session_state.payment_pending = False
+    if "payment_data" not in st.session_state: st.session_state.payment_data = {}
+    if "payment_plan_selected" not in st.session_state: st.session_state.payment_plan_selected = None
+
+    # SE NÃO TIVER PAGAMENTO PENDENTE, MOSTRA OS CARDS
+    if not st.session_state.payment_pending:
+        st.write("Escolha o pacote ideal para sua empresa:")
+        cols = st.columns(len(plans_data)) if len(plans_data) <= 4 else st.columns(3)
+        
+        for i, (p_name, p_tag, p_price, p_cents, p_credits) in enumerate(plans_data):
+            # Lógica para quebrar colunas se tiver muitos planos
+            col = cols[i % 3] 
+            with col:
+                with st.container(border=True):
+                    st.markdown(f"### {p_name}")
+                    st.markdown(f"<h2 style='color: #28a745;'>{p_price}</h2>", unsafe_allow_html=True)
+                    st.caption(f"Liberado imediatamente após PIX.")
+                    
+                    if st.button(f"Comprar {p_name}", key=f"btn_buy_{i}", use_container_width=True):
+                        with st.spinner("Gerando PIX..."):
+                            ok, res = db.create_pagarme_order(user, p_tag, p_cents, p_name)
+                            if ok:
+                                try:
+                                    charges = res.get('charges', [])[0]
+                                    txn = charges.get('last_transaction', {})
+                                    qr_code_url = txn.get('qr_code_url')
+                                    qr_code_text = txn.get('qr_code')
+                                    order_id = res.get('id')
+                                    
+                                    st.session_state.payment_pending = True
+                                    st.session_state.payment_data = {
+                                        "qr_url": qr_code_url,
+                                        "qr_text": qr_code_text,
+                                        "order_id": order_id,
+                                        "amount": p_price
+                                    }
+                                    st.session_state.payment_plan_selected = p_tag
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Erro ao processar resposta do pagamento: {e}")
+                            else:
+                                st.error(f"Erro ao criar pedido: {res}")
+
+    # SE TIVER PAGAMENTO PENDENTE (MANTÉM A MESMA LÓGICA ANTERIOR)
+    else:
+        st.markdown("---")
+        c1, c2 = st.columns([1, 1])
+        
+        pay_dat = st.session_state.payment_data
+        
+        with c1:
+            st.subheader("Pagamento via PIX")
+            st.write(f"Valor: **{pay_dat['amount']}**")
+            st.info("Abra o aplicativo do seu banco e escaneie o QR Code.")
+            
+            if pay_dat.get('qr_url'):
+                st.image(pay_dat['qr_url'], width=250)
+            
+            st.text_area("Ou copie e cole o código abaixo:", pay_dat.get('qr_text'), height=100)
+            
+            if st.button("❌ Cancelar / Voltar"):
+                st.session_state.payment_pending = False
+                st.session_state.payment_data = {}
+                st.rerun()
+
+        with c2:
+            st.subheader("Já pagou?")
+            st.write("O sistema verifica automaticamente, mas você pode forçar a verificação abaixo.")
+            
+            if st.button("🔄 JÁ PAGUEI / VERIFICAR AGORA", type="primary", use_container_width=True):
+                with st.spinner("Consultando banco..."):
+                    status = db.check_pagarme_order_status(pay_dat['order_id'])
+                    
+                    if status == 'paid':
+                        target_plan = st.session_state.payment_plan_selected
+                        
+                        expiration = None
+                        if target_plan == 'unlimited_30':
+                            expiration = datetime.now() + timedelta(days=30)
+                            
+                        db.admin_update_plan(user['username'], target_plan, expires_at=expiration)
+                        db.admin_set_credits_used(user['username'], 0)
+                        
+                        st.balloons()
+                        st.success("✅ Pagamento Confirmado! Seu plano foi ativado.")
+                        
+                        st.session_state.payment_pending = False
+                        st.session_state.payment_data = {}
+                        time.sleep(3)
+                        st.rerun()
+                        
+                    elif status == 'failed' or status == 'canceled':
+                        st.error("O pagamento falhou ou foi cancelado.")
+                    else:
+                        st.warning("O pagamento ainda não foi confirmado pelo banco. Aguarde alguns instantes e tente novamente.")
+
+            time.sleep(1) 
+            st.caption("Aguardando confirmação...")
