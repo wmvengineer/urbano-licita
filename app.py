@@ -1307,19 +1307,20 @@ elif menu == "📅 Calendário":
             if pdf: 
                 st.download_button("⬇️ Baixar PDF da Análise", data=pdf, file_name="analise_completa.pdf")
 
-# 6. ASSINATURA (COM PAGBANK)
+# 6. ASSINATURA (MERCADO PAGO)
 elif menu == "Assinatura":
     st.title("💎 Planos & Assinaturas")
     
     st.info(f"Seu Plano Atual: **{PLAN_MAP.get(user['plan'], user['plan']).upper()}** | Créditos Disponíveis: {user['credits']}")
     
-    # LISTA DE PLANOS
+    # LISTA DE PLANOS - ATENÇÃO AOS VALORES EM FLOAT (REAIS)
+    # Estrutura: ("Nome", "Tag", "Texto", Valor Float, Créditos)
     plans_data = [
-        ("🥉 Plano 15", "plano_15", "R$ 29,90", 2990, 15),
-        ("🥈 Plano 30", "plano_30", "R$ 54,90", 5490, 30),
-        ("🥇 Plano 60", "plano_60", "R$ 96,90", 9690, 60),
-        ("💎 Plano 90", "plano_90", "R$ 125,90", 12590, 90),
-        ("♾️ Ilimitado (30 Dias)", "unlimited_30", "R$ 229,90", 22990, 999999)
+        ("🥉 Plano 15", "plano_15", "R$ 29,90", 29.90, 15),
+        ("🥈 Plano 30", "plano_30", "R$ 54,90", 54.90, 30),
+        ("🥇 Plano 60", "plano_60", "R$ 96,90", 96.90, 60),
+        ("💎 Plano 90", "plano_90", "R$ 125,90", 125.90, 90),
+        ("♾️ Ilimitado (30 Dias)", "unlimited_30", "R$ 229,90", 229.90, 999999)
     ]
 
     if "payment_pending" not in st.session_state: st.session_state.payment_pending = False
@@ -1331,46 +1332,39 @@ elif menu == "Assinatura":
         st.write("Escolha o pacote ideal:")
         cols = st.columns(len(plans_data)) if len(plans_data) <= 4 else st.columns(3)
         
-        for i, (p_name, p_tag, p_price, p_cents, p_credits) in enumerate(plans_data):
+        for i, (p_name, p_tag, p_price, p_val, p_credits) in enumerate(plans_data):
             col = cols[i % 3] 
             with col:
                 with st.container(border=True):
                     st.markdown(f"### {p_name}")
-                    st.markdown(f"<h2 style='color: #0077ff;'>{p_price}</h2>", unsafe_allow_html=True)
-                    st.caption("Liberação Automática via PagBank")
+                    st.markdown(f"<h2 style='color: #009ee3;'>{p_price}</h2>", unsafe_allow_html=True)
+                    st.caption("Liberação Automática via Mercado Pago")
                     
                     if st.button(f"Comprar {p_name}", key=f"btn_buy_{i}", use_container_width=True):
-                        with st.spinner("Conectando ao PagBank..."):
-                            # Chama função do PagBank
-                            ok, res = db.create_pagbank_order(user, p_tag, p_cents, p_name)
+                        with st.spinner("Gerando PIX..."):
+                            # Chama função do Mercado Pago
+                            ok, res = db.create_mercadopago_order(user, p_tag, p_val, p_name)
                             
                             if ok:
                                 try:
-                                    # LÓGICA DE EXTRAÇÃO ESPECÍFICA DO PAGBANK
-                                    qr_codes = res.get('qr_codes', [])
-                                    if not qr_codes:
-                                        st.error("Erro: PagBank não retornou QR Code.")
+                                    # LÓGICA DE EXTRAÇÃO MERCADO PAGO
+                                    poi = res.get('point_of_interaction', {})
+                                    txn_data = poi.get('transaction_data', {})
+                                    
+                                    qr_code_base64 = txn_data.get('qr_code_base64') # Imagem em Base64
+                                    qr_code_text = txn_data.get('qr_code') # Copia e Cola
+                                    payment_id = res.get('id')
+                                    
+                                    if not qr_code_text:
+                                        st.error("Erro: QR Code não gerado pelo Mercado Pago.")
+                                        st.write(res)
                                         st.stop()
-                                    
-                                    # PagBank devolve links dentro do objeto qr_code
-                                    links = qr_codes[0].get('links', [])
-                                    
-                                    qr_image = None
-                                    qr_text = qr_codes[0].get('text') # Copia e Cola fica aqui
-                                    
-                                    # Procura o link da imagem (rel="QRCODE.PNG")
-                                    for link in links:
-                                        if link.get('rel') == 'QRCODE.PNG':
-                                            qr_image = link.get('href')
-                                            break
-                                    
-                                    order_id = res.get('id')
-                                    
+
                                     st.session_state.payment_pending = True
                                     st.session_state.payment_data = {
-                                        "qr_url": qr_image,
-                                        "qr_text": qr_text,
-                                        "order_id": order_id,
+                                        "qr_img_b64": qr_code_base64,
+                                        "qr_text": qr_code_text,
+                                        "order_id": payment_id,
                                         "amount": p_price
                                     }
                                     st.session_state.payment_plan_selected = p_tag
@@ -1378,10 +1372,10 @@ elif menu == "Assinatura":
                                     
                                 except Exception as e:
                                     st.error(f"Erro ao processar resposta: {e}")
-                                    st.write(res) # Debug se der erro
+                                    st.write(res)
                             else:
-                                st.error("Erro na comunicação com PagBank:")
-                                st.json(res)
+                                st.error("Erro na comunicação com Mercado Pago:")
+                                st.code(res)
 
     # --- TELA DE CHECKOUT ---
     else:
@@ -1390,14 +1384,17 @@ elif menu == "Assinatura":
         pay_dat = st.session_state.payment_data
         
         with c1:
-            st.subheader("Pagamento via PIX (PagBank)")
+            st.subheader("Pagamento via PIX (Mercado Pago)")
             st.write(f"Valor: **{pay_dat['amount']}**")
             
-            # Exibe QR Code
-            if pay_dat.get('qr_url'):
-                st.image(pay_dat['qr_url'], width=250, caption="Scan me")
+            # Exibe QR Code (Base64)
+            if pay_dat.get('qr_img_b64'):
+                st.markdown(
+                    f'<div style="text-align: center;"><img src="data:image/png;base64,{pay_dat["qr_img_b64"]}" width="250" /></div>',
+                    unsafe_allow_html=True
+                )
             else:
-                st.warning("Imagem do QR não disponível, use o código abaixo.")
+                st.warning("Imagem QR não disponível.")
             
             st.text_area("Copia e Cola:", pay_dat.get('qr_text'), height=100)
             
@@ -1408,9 +1405,11 @@ elif menu == "Assinatura":
 
         with c2:
             st.subheader("Confirmação")
-            if st.button("🔄 JÁ PAGUEI", type="primary", use_container_width=True):
-                with st.spinner("Verificando no PagBank..."):
-                    status = db.check_pagbank_order_status(pay_dat['order_id'])
+            st.info("Assim que pagar no app do banco, clique abaixo:")
+            
+            if st.button("🔄 JÁ PAGUEI / VERIFICAR", type="primary", use_container_width=True):
+                with st.spinner("Verificando status..."):
+                    status = db.check_mercadopago_status(pay_dat['order_id'])
                     
                     if status == 'paid':
                         target_plan = st.session_state.payment_plan_selected
@@ -1425,11 +1424,13 @@ elif menu == "Assinatura":
                         db.admin_set_credits_used(user['username'], 0)
                         
                         st.balloons()
-                        st.success("✅ Pagamento Aprovado! Plano Ativado.")
+                        st.success("✅ Pagamento Aprovado! Plano Ativado com Sucesso.")
                         
                         st.session_state.payment_pending = False
                         st.session_state.payment_data = {}
                         time.sleep(3)
                         st.rerun()
+                    elif status == 'failed':
+                        st.error("Pagamento rejeitado ou cancelado.")
                     else:
-                        st.warning(f"Pagamento ainda não confirmado. Status: {status}")
+                        st.warning("Ainda não identificamos o pagamento. Aguarde alguns segundos e tente novamente.")

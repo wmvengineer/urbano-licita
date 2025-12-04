@@ -17,6 +17,7 @@ import base64    # <--- O ERRO ESTÁ AQUI (FALTAVA ESTE)
 import requests  # <--- E ESTE TAMBÉM
 import json
 import datetime
+import uuid
 
 # --- CONFIGURAÇÃO ---
 BUCKET_NAME = "urbano-licita.firebasestorage.app" 
@@ -545,72 +546,52 @@ def check_deadlines_and_notify():
     
     return logs
 
-# --- INTEGRAÇÃO PAGBANK (PAGSEGURO) ---
+# --- INTEGRAÇÃO MERCADO PAGO ---
 
-def create_pagbank_order(user_dict, plan_tag, amount_cents, plan_name):
+def create_mercadopago_order(user_dict, plan_tag, amount_float, plan_name):
     """
-    Cria um pedido PIX na API PagBank.
+    Cria um pagamento PIX no Mercado Pago.
+    amount_float: Valor em REAIS (ex: 29.90) e não centavos.
     """
-    # Verifica se as secrets existem para evitar erro genérico
-    if "PAGBANK" not in st.secrets:
-        return False, "Configuração PAGBANK não encontrada nos Secrets."
+    if "MERCADOPAGO" not in st.secrets:
+        return False, "Configuração MERCADOPAGO não encontrada."
 
-    base_url = st.secrets["PAGBANK"]["BASE_URL"]
-    token = st.secrets["PAGBANK"]["TOKEN"]
-    
-    url = f"{base_url}/orders"
+    token = st.secrets["MERCADOPAGO"]["ACCESS_TOKEN"]
+    url = "https://api.mercadopago.com/v1/payments"
     
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
-        "accept": "application/json"
+        "X-Idempotency-Key": str(uuid.uuid4()) # Evita pagamentos duplicados acidentais
     }
 
-    # Tratamento simples de telefone e CPF
-    phone_raw = "11999999999"
-    area = phone_raw[:2]
-    number = phone_raw[2:]
+    # Tratamento de Email (Mercado Pago exige email válido)
+    email = user_dict.get('email', 'email@teste.com')
+    if "@" not in email: email = "email@teste.com"
 
+    # Tratamento de CPF (Opcional no MP, mas bom ter)
     raw_doc = str(user_dict.get('cnpj', '')).strip()
-    tax_id = "".join(filter(str.isdigit, raw_doc))
-    
-    if not tax_id or len(tax_id) < 11 or tax_id == "00000000000":
-        tax_id = "19707565000131" # CNPJ de teste
-
-    # Expiração de 1 hora
-    expiry_date = (datetime.datetime.now() + datetime.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S-03:00")
+    doc_number = "".join(filter(str.isdigit, raw_doc))
+    # MP exige que identifique se é CPF ou CNPJ pelo tamanho
+    doc_type = "CNPJ" if len(doc_number) > 11 else "CPF"
+    if not doc_number: doc_number = "19111111111" # Fallback
 
     payload = {
-        "reference_id": f"REF-{plan_tag}-{int(datetime.datetime.now().timestamp())}",
-        "customer": {
-            "name": user_dict.get('name', 'Cliente Urbano')[:60],
-            "email": user_dict.get('email', 'email@test.com'),
-            "tax_id": tax_id,
-            "phones": [
-                {
-                    "country": "55",
-                    "area": area,
-                    "number": number,
-                    "type": "MOBILE"
-                }
-            ]
+        "transaction_amount": float(amount_float), # MP usa FLOAT (29.90)
+        "description": f"Assinatura Urbano - {plan_name}",
+        "payment_method_id": "pix",
+        "payer": {
+            "email": email,
+            "first_name": user_dict.get('name', 'Cliente')[:30],
+            "identification": {
+                "type": doc_type,
+                "number": doc_number
+            }
         },
-        "items": [
-            {
-                "reference_id": plan_tag,
-                "name": plan_name,
-                "quantity": 1,
-                "unit_amount": amount_cents
-            }
-        ],
-        "qr_codes": [
-            {
-                "amount": {
-                    "value": amount_cents
-                },
-                "expiration_date": expiry_date
-            }
-        ]
+        "metadata": {
+            "plan_tag": plan_tag,
+            "user_id": user_dict.get('username')
+        }
     }
 
     try:
@@ -622,37 +603,32 @@ def create_pagbank_order(user_dict, plan_tag, amount_cents, plan_name):
     except Exception as e:
         return False, str(e)
 
-def check_pagbank_order_status(order_id):
+def check_mercadopago_status(payment_id):
     """
-    Verifica status do pedido PagBank.
+    Verifica o status do pagamento no Mercado Pago.
     """
-    if "PAGBANK" not in st.secrets: return None
+    if "MERCADOPAGO" not in st.secrets: return None
 
-    base_url = st.secrets["PAGBANK"]["BASE_URL"]
-    token = st.secrets["PAGBANK"]["TOKEN"]
-    
-    url = f"{base_url}/orders/{order_id}"
+    token = st.secrets["MERCADOPAGO"]["ACCESS_TOKEN"]
+    url = f"https://api.mercadopago.com/v1/payments/{payment_id}"
     
     headers = {
-        "Authorization": f"Bearer {token}",
-        "accept": "application/json"
+        "Authorization": f"Bearer {token}"
     }
     
     try:
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             data = response.json()
+            status = data.get('status')
             
-            # Verifica status das cobranças
-            charges = data.get('charges', [])
-            if charges:
-                if any(c.get('status') == 'PAID' for c in charges):
-                    return 'paid'
-            
-            if data.get('status') == 'PAID':
+            # Status possíveis: pending, approved, authorized, in_process, in_mediation, rejected, cancelled, refunded, charged_back
+            if status == 'approved':
                 return 'paid'
-                
-            return 'pending'
+            elif status == 'rejected' or status == 'cancelled':
+                return 'failed'
+            else:
+                return 'pending'
         return None
     except:
         return None
