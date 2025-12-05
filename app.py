@@ -243,77 +243,6 @@ if st.session_state.user is None:
 # Verifica se a URL tem o status de aprovado
 query_params = st.query_params
 
-if query_params.get("status") == "approved" and query_params.get("payment_id"):
-    pay_id = query_params.get("payment_id")
-    
-    # Evita processar o mesmo ID várias vezes (sessão)
-    if "last_processed_payment" not in st.session_state or st.session_state.last_processed_payment != pay_id:
-        
-        # Mostra um spinner enquanto valida com o Mercado Pago
-        with st.spinner("Pagamento detectado! Validando e liberando acesso..."):
-            # Chama o Mercado Pago para confirmar se o status é real (Segurança)
-            payment_info = db.get_payment_details(pay_id)
-            
-            if payment_info and payment_info.get("status") == "approved":
-                meta = payment_info.get("metadata", {})
-                
-                # Quem comprou? Qual plano?
-                buyer_user = meta.get("username")
-                plan_bought = meta.get("plan_tag")
-                
-                # Valida se o pagamento pertence ao usuário logado
-                if buyer_user == st.session_state.user['username'] and plan_bought:
-                    
-                    # 1. Define validade (apenas para o plano de 30 dias)
-                    expiration = None
-                    if plan_bought == 'unlimited_30':
-                        expiration = datetime.now() + timedelta(days=30)
-                    
-                    # 2. Atualiza no Banco de Dados
-                    db.admin_update_plan(buyer_user, plan_bought, expires_at=expiration)
-                    # Reseta ou define os créditos (opcional: zerar contador ou dar saldo)
-                    db.admin_set_credits_used(buyer_user, 0)
-                    
-                    # 3. Atualiza a Sessão Atual (para o usuário ver na hora)
-                    st.session_state.user['plan'] = plan_bought
-                    st.session_state.user['credits'] = 0
-                    
-                    # 4. Feedback e Limpeza
-                    st.toast("✅ Sucesso! Seu plano foi ativado.", icon="🎉")
-                    st.balloons()
-                    
-                    # Marca como processado para não repetir
-                    st.session_state.last_processed_payment = pay_id
-                    
-                    # Limpa a URL para remover ?status=approved
-                    time.sleep(3)
-                    st.query_params.clear()
-                    st.rerun()
-            else:
-                st.error("Não foi possível validar o pagamento automaticamente. Contate o suporte.")
-    
-    auth_cookie = cookie_manager.get("urbano_auth")
-    
-    if auth_cookie:
-        try:
-            u, t = auth_cookie.split('|')
-            if db.check_session_valid(u, t):
-                raw = db.get_user_by_username(u)
-                if raw:
-                    st.session_state.user = {
-                        "username": raw.get('username'), 
-                        "name": raw.get('name'),
-                        "role": raw.get('role'), 
-                        "plan": raw.get('plan_type', 'free'),
-                        "credits": raw.get('credits_used', 0), 
-                        "token": raw.get('token'),
-                        "company_name": raw.get('company_name', ''), # Carrega Empresa
-                        "cnpj": raw.get('cnpj', '')                  # Carrega CNPJ
-                    }
-                    st.rerun()
-        except:
-            pass
-
 def logout():
     st.session_state.user = None
     try:
@@ -1458,7 +1387,7 @@ elif menu == "📅 Calendário":
 
 # # # 6. ASSINATURA (CHECKOUT REDIRECT SIMPLES)
 elif menu == "Assinatura":
-    st.title("💎 Planos & Assinaturas")
+    st.title("💎 Planos & Assinaturas (Via PIX)")
     st.info(f"Seu Plano Atual: **{PLAN_MAP.get(user['plan'], user['plan']).upper()}** | Créditos Disponíveis: {user['credits']}")
     
     # Lista de Planos
@@ -1470,31 +1399,88 @@ elif menu == "Assinatura":
         ("♾️ Ilimitado (30 Dias)", "unlimited_30", "R$ 229,90", 229.90, 999999)
     ]
 
-    st.write("Escolha o pacote ideal e finalize o pagamento no ambiente seguro do Mercado Pago:")
-    st.caption("Aceita PIX, Cartão de Crédito e Boleto.")
+    # --- GERENCIAMENTO DE ESTADO DO PAGAMENTO NA TELA ---
+    if "pending_payment" not in st.session_state:
+        st.session_state.pending_payment = None
 
-    cols = st.columns(len(plans_data)) if len(plans_data) <= 4 else st.columns(3)
-    
-    for i, (p_name, p_tag, p_price, p_val, p_credits) in enumerate(plans_data):
-        col = cols[i % 3] 
-        with col:
-            with st.container(border=True):
-                st.markdown(f"### {p_name}")
-                st.markdown(f"<h2 style='color: #009ee3;'>{p_price}</h2>", unsafe_allow_html=True)
-                
-                # Gera o link único para este usuário + este plano
-                if st.button(f"Assinar {p_name}", key=f"btn_go_mp_{i}", use_container_width=True):
-                    with st.spinner("Redirecionando para Mercado Pago..."):
-                        ok, checkout_url = db.create_mercadopago_preference(user, p_tag, p_val, p_name)
+    # Se NÃO tiver pagamento pendente sendo mostrado, exibe os cards
+    if not st.session_state.pending_payment:
+        st.write("Escolha o pacote ideal. O pagamento é instantâneo via PIX.")
+        
+        cols = st.columns(len(plans_data)) if len(plans_data) <= 3 else st.columns(3)
+        
+        for i, (p_name, p_tag, p_price, p_val, p_credits) in enumerate(plans_data):
+            col = cols[i % 3] 
+            with col:
+                with st.container(border=True):
+                    st.markdown(f"### {p_name}")
+                    st.markdown(f"<h2 style='color: #28a745;'>{p_price}</h2>", unsafe_allow_html=True)
+                    
+                    if st.button(f"Comprar {p_name}", key=f"btn_pix_{i}", use_container_width=True):
+                        with st.spinner("Gerando QR Code Pix..."):
+                            ok, data = db.create_livepix_charge(user, p_tag, p_val, p_name)
+                            
+                            if ok:
+                                # Salva na sessão para manter o QR Code na tela
+                                st.session_state.pending_payment = {
+                                    "plan_tag": p_tag,
+                                    "plan_name": p_name,
+                                    "qr_image": data["qr_code_image"],
+                                    "copia_cola": data["copia_cola"],
+                                    "transaction_id": data["transaction_id"]
+                                }
+                                st.rerun() # Recarrega para mostrar a tela de pagamento
+                            else:
+                                st.error(f"Erro ao gerar Pix: {data}")
+
+    # Se JÁ tiver um pagamento gerado, mostra o QR Code e o botão de verificar
+    else:
+        pay_data = st.session_state.pending_payment
+        
+        st.markdown(f"### 🚀 Finalizando: {pay_data['plan_name']}")
+        
+        c1, c2 = st.columns([1, 1])
+        
+        with c1:
+            st.image(pay_data["qr_image"], caption="Escaneie no App do seu Banco", width=300)
+            
+        with c2:
+            st.warning("1. Escaneie o QR Code ou copie o código abaixo.\n2. Realize o pagamento no seu banco.\n3. Clique no botão 'Já realizei o pagamento' para liberar seu acesso.")
+            st.text_area("Pix Copia e Cola", pay_data["copia_cola"], height=100)
+            
+            # Botão para validar
+            if st.button("✅ Já realizei o pagamento", type="primary", use_container_width=True):
+                with st.spinner("Verificando com o banco..."):
+                    # Verifica no LivePix
+                    is_paid = db.check_livepix_status(pay_data["transaction_id"])
+                    
+                    if is_paid:
+                        # --- ATIVAÇÃO DO PLANO ---
+                        plan_tag = pay_data["plan_tag"]
+                        expiration = None
+                        if plan_tag == 'unlimited_30':
+                            expiration = datetime.now() + timedelta(days=30)
                         
-                        if ok:
-                            # Botão de Link que abre nova aba
-                            st.link_button(
-                                f"👉 PAGAR {p_price} AGORA", 
-                                checkout_url, 
-                                type="primary", 
-                                use_container_width=True
-                            )
-                            st.info("Você preencherá seus dados de pagamento na próxima tela.")
-                        else:
-                            st.error("Erro ao gerar checkout. Tente novamente.")
+                        # Atualiza Banco de Dados
+                        db.admin_update_plan(user['username'], plan_tag, expires_at=expiration)
+                        # Opcional: Zerar créditos usados
+                        db.admin_set_credits_used(user['username'], 0)
+                        
+                        # Atualiza Sessão Local
+                        st.session_state.user['plan'] = plan_tag
+                        st.session_state.user['credits'] = 0
+                        
+                        st.balloons()
+                        st.success(f"Sucesso! Plano {pay_data['plan_name']} ativado.")
+                        
+                        # Limpa estado do pagamento
+                        st.session_state.pending_payment = None
+                        time.sleep(3)
+                        st.rerun()
+                    else:
+                        st.error("O pagamento ainda não foi confirmado pelo LivePix. Aguarde alguns segundos e tente novamente.")
+            
+            st.markdown("---")
+            if st.button("Cancelar / Voltar"):
+                st.session_state.pending_payment = None
+                st.rerun()

@@ -546,97 +546,85 @@ def check_deadlines_and_notify():
     
     return logs
 
-# --- INTEGRAÇÃO MERCADO PAGO (CHECKOUT PRO / REDIRECT) ---
+# --- INTEGRAÇÃO LIVEPIX ---
 
-def create_mercadopago_preference(user_dict, plan_tag, amount_float, plan_name):
+def create_livepix_charge(user_dict, plan_tag, amount_float, plan_name):
     """
-    Gera link do Checkout Pro (Mercado Pago pede os dados lá).
+    Cria uma cobrança Pix estática/dinâmica no LivePix.
+    Retorna (True, dados_pix) ou (False, erro).
     """
-    if "MERCADOPAGO" not in st.secrets:
-        return False, "Configuração MERCADOPAGO incompleta."
+    if "LIVEPIX" not in st.secrets:
+        return False, "Configuração LIVEPIX incompleta."
 
-    token = st.secrets["MERCADOPAGO"]["ACCESS_TOKEN"]
-    # Pega a URL configurada ou usa localhost
-    app_url = st.secrets["MERCADOPAGO"].get("APP_URL", "http://localhost:8501")
+    token = st.secrets["LIVEPIX"]["APP_TOKEN"]
+    base_url = st.secrets["LIVEPIX"].get("API_URL", "https://api.livepix.gg/v2")
     
-    url = "https://api.mercadopago.com/checkout/preferences"
+    url = f"{base_url}/charges"
     
     headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "X-Idempotency-Key": str(uuid.uuid4())
+        "Authorization": token,
+        "Content-Type": "application/json"
     }
 
-    # Payload simplificado: Envia apenas o item e o email (para pré-preencher, se houver).
-    # O Mercado Pago pedirá CPF, Nome completo e meios de pagamento.
+    # Gera um ID único para correlação
+    correlation_id = f"{user_dict['username']}_{plan_tag}_{uuid.uuid4().hex[:8]}"
+    
+    # O LivePix normalmente trabalha com valor em CENTAVOS (Inteiro)
+    amount_in_cents = int(float(amount_float) * 100)
+
     payload = {
-        "items": [
-            {
-                "id": plan_tag,
-                "title": f"Assinatura Urbano - {plan_name}",
-                "description": f"Acesso ao plano {plan_name}",
-                "quantity": 1,
-                "currency_id": "BRL",
-                "unit_price": float(amount_float)
-            }
-        ],
-        "payer": {
-            "name": user_dict.get('name', 'Cliente Urbano')[:50],
-            "email": user_dict.get('email', 'email@teste.com')
-            # NÃO ENVIAMOS 'identification' AQUI. O MP VAI PEDIR NA TELA DELES.
-        },
-        "back_urls": {
-            "success": app_url,   # Redireciona para cá se aprovar
-            "failure": app_url,
-            "pending": app_url
-        },
-        "auto_return": "approved", # Força o redirecionamento automático
-        "metadata": {
-            "plan_tag": plan_tag,
-            "username": user_dict['username'] # Identificador para ativarmos o plano na volta
-        },
-        "external_reference": f"{plan_tag}_{int(datetime.datetime.now().timestamp())}",
-        "statement_descriptor": "URBANO LICITA" # Nome na fatura (max 22 chars)
+        "value": amount_in_cents,
+        "correlationId": correlation_id,
+        "comment": f"Assinatura Urbano - {plan_name}"
+        # Opcional: "redirectUrl": "seusite.com" (Não usaremos pois validaremos na tela)
     }
 
     try:
         response = requests.post(url, headers=headers, json=payload)
+        
         if response.status_code in [200, 201]:
             res_json = response.json()
-            # Retorna o link (init_point)
-            return True, res_json.get("init_point") 
+            # A estrutura de resposta do LivePix contém 'pix' com 'qrCodeImage' e 'string' (copia e cola)
+            pix_data = res_json.get("pix", {})
+            return True, {
+                "transaction_id": res_json.get("correlationId"), # Ou o ID interno do LivePix se preferir
+                "qr_code_image": pix_data.get("qrCodeImage"),
+                "copia_cola": pix_data.get("string")
+            }
         else:
-            return False, response.text
+            return False, f"Erro API LivePix: {response.text}"
     except Exception as e:
         return False, str(e)
 
 # MANTENHA A FUNÇÃO get_payment_details QUE JÁ CRIAMOS ANTERIORMENTE
-def get_payment_details(payment_id):
-    if "MERCADOPAGO" not in st.secrets: return None
-    token = st.secrets["MERCADOPAGO"]["ACCESS_TOKEN"]
-    url = f"https://api.mercadopago.com/v1/payments/{payment_id}"
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
-        req = requests.get(url, headers=headers)
-        if req.status_code == 200: return req.json()
-        return None
-    except: return None
-
-def get_payment_details(payment_id):
+def check_livepix_status(correlation_id):
     """
-    Busca os detalhes de um pagamento pelo ID para validação segura.
+    Consulta o status de uma cobrança no LivePix.
+    Retorna True se estiver PAGO (COMPLETED/PAID).
     """
-    if "MERCADOPAGO" not in st.secrets: return None
+    if "LIVEPIX" not in st.secrets: return False
     
-    token = st.secrets["MERCADOPAGO"]["ACCESS_TOKEN"]
-    url = f"https://api.mercadopago.com/v1/payments/{payment_id}"
+    token = st.secrets["LIVEPIX"]["APP_TOKEN"]
+    base_url = st.secrets["LIVEPIX"].get("API_URL", "https://api.livepix.gg/v2")
     
-    headers = {"Authorization": f"Bearer {token}"}
+    # O endpoint pode variar (ex: /charges?correlationId=X ou /charges/ID).
+    # Vamos assumir busca por correlationId que é o padrão comum para rastreio.
+    url = f"{base_url}/charges?correlationId={correlation_id}"
+    
+    headers = {"Authorization": token}
     
     try:
         req = requests.get(url, headers=headers)
         if req.status_code == 200:
-            return req.json()
-        return None
+            data = req.json()
+            # A API pode retornar uma lista ou objeto único. Ajuste conforme retorno real.
+            # Se for lista, pegamos o primeiro item.
+            charge = data[0] if isinstance(data, list) and len(data) > 0 else data
+            
+            status = charge.get("status", "").upper()
+            # Status de sucesso no LivePix geralmente é 'COMPLETED' ou 'PAID'
+            if status in ["COMPLETED", "PAID"]:
+                return True
+        return False
     except:
-        return None
+        return False
