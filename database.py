@@ -548,9 +548,68 @@ def check_deadlines_and_notify():
 
 # --- INTEGRAÇÃO LIVEPIX ---
 
-create_livepix_charge
+def create_livepix_charge(user_dict, plan_tag, amount_float, plan_name):
+    """
+    Cria uma cobrança Pix estática/dinâmica no LivePix.
+    Retorna (True, dados_pix) ou (False, erro).
+    """
+    if "LIVEPIX" not in st.secrets:
+        return False, "Configuração LIVEPIX incompleta."
 
-# MANTENHA A FUNÇÃO get_payment_details QUE JÁ CRIAMOS ANTERIORMENTE
+    token = st.secrets["LIVEPIX"]["APP_TOKEN"]
+    # Pega a URL e remove barra no final se houver, para evitar duplicidade
+    base_url = st.secrets["LIVEPIX"].get("API_URL", "https://api.livepix.gg/v2").rstrip('/')
+    
+    # Endpoint padrão
+    url = f"{base_url}/charges"
+    
+    # --- DEBUG NO CONSOLE (Aparecerá no terminal preto do Streamlit) ---
+    print(f"--- DEBUG LIVEPIX ---")
+    print(f"URL: {url}")
+    # ------------------------------------------------------------------
+
+    headers = {
+        "Authorization": token,
+        "Content-Type": "application/json"
+    }
+
+    # Gera um ID único para correlação
+    correlation_id = f"{user_dict['username']}_{plan_tag}_{uuid.uuid4().hex[:8]}"
+    
+    # O LivePix trabalha com valor em CENTAVOS (Inteiro)
+    amount_in_cents = int(float(amount_float) * 100)
+
+    payload = {
+        "value": amount_in_cents,
+        "correlationId": correlation_id,
+        "comment": f"Assinatura Urbano - {plan_name}"
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=payload)
+        
+        if response.status_code in [200, 201]:
+            res_json = response.json()
+            pix_data = res_json.get("pix", {})
+            
+            # Tenta pegar a imagem e o copia-cola de diferentes locais possíveis na resposta
+            qr_image = pix_data.get("qrCodeImage") or res_json.get("qrCodeImage")
+            copia_cola = pix_data.get("string") or res_json.get("pixString") or res_json.get("payload")
+
+            if not qr_image or not copia_cola:
+                # Se criou a cobrança mas não veio o PIX, retorna erro para debug
+                return False, f"API respondeu OK, mas sem dados do Pix. Resposta: {res_json}"
+
+            return True, {
+                "transaction_id": res_json.get("correlationId") or correlation_id,
+                "qr_code_image": qr_image,
+                "copia_cola": copia_cola
+            }
+        else:
+            return False, f"Erro API LivePix ({response.status_code}): {response.text}"
+    except Exception as e:
+        return False, str(e)
+
 def check_livepix_status(correlation_id):
     """
     Consulta o status de uma cobrança no LivePix.
@@ -559,10 +618,8 @@ def check_livepix_status(correlation_id):
     if "LIVEPIX" not in st.secrets: return False
     
     token = st.secrets["LIVEPIX"]["APP_TOKEN"]
-    base_url = st.secrets["LIVEPIX"].get("API_URL", "https://api.livepix.gg/v2")
+    base_url = st.secrets["LIVEPIX"].get("API_URL", "https://api.livepix.gg/v2").rstrip('/')
     
-    # O endpoint pode variar (ex: /charges?correlationId=X ou /charges/ID).
-    # Vamos assumir busca por correlationId que é o padrão comum para rastreio.
     url = f"{base_url}/charges?correlationId={correlation_id}"
     
     headers = {"Authorization": token}
@@ -571,14 +628,14 @@ def check_livepix_status(correlation_id):
         req = requests.get(url, headers=headers)
         if req.status_code == 200:
             data = req.json()
-            # A API pode retornar uma lista ou objeto único. Ajuste conforme retorno real.
-            # Se for lista, pegamos o primeiro item.
+            # A API pode retornar uma lista ou objeto único
             charge = data[0] if isinstance(data, list) and len(data) > 0 else data
             
-            status = charge.get("status", "").upper()
-            # Status de sucesso no LivePix geralmente é 'COMPLETED' ou 'PAID'
-            if status in ["COMPLETED", "PAID"]:
-                return True
+            # Verifica o status
+            if isinstance(charge, dict):
+                status = charge.get("status", "").upper()
+                if status in ["COMPLETED", "PAID"]:
+                    return True
         return False
     except:
         return False
