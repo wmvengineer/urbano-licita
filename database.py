@@ -550,95 +550,112 @@ def check_deadlines_and_notify():
 
 def create_livepix_charge(user_dict, plan_tag, amount_float, plan_name):
     """
-    Cria uma cobrança Pix estática/dinâmica no LivePix.
-    Retorna (True, dados_pix) ou (False, erro).
+    Cria uma cobrança Pix no LivePix.
+    Tenta múltiplos endpoints e formatos de header para evitar erro 404.
     """
     if "LIVEPIX" not in st.secrets:
-        return False, "Configuração LIVEPIX incompleta (falta secrets)."
+        return False, "Configuração LIVEPIX incompleta."
 
-    token = st.secrets["LIVEPIX"]["APP_TOKEN"]
+    raw_token = st.secrets["LIVEPIX"]["APP_TOKEN"]
     
-    # --- CORREÇÃO: Forçando a URL correta para evitar erros de configuração ---
-    # Se você quiser usar outra, altere aqui, mas esta é a padrão da API v2
-    url = "https://api.livepix.gg/v2/charges"
-    
-    # --- DEBUG: Olhe no seu terminal (console preto) o que aparece aqui ---
-    print(f"\n--- DEBUG LIVEPIX CREATE ---")
-    print(f"Tentando acessar: {url}")
-    print(f"Valor: {amount_float}")
-    # ---------------------------------------------------------------------
-
-    headers = {
-        "Authorization": token,
-        "Content-Type": "application/json"
-    }
-
-    # Gera um ID único para correlação
+    # Prepara valor em centavos
+    amount_in_cents = int(float(amount_float) * 100)
     correlation_id = f"{user_dict['username']}_{plan_tag}_{uuid.uuid4().hex[:8]}"
     
-    # O LivePix trabalha com valor em CENTAVOS (Inteiro)
-    # Ex: 29.90 vira 2990
-    amount_in_cents = int(float(amount_float) * 100)
-
     payload = {
         "value": amount_in_cents,
         "correlationId": correlation_id,
         "comment": f"Assinatura Urbano - {plan_name}"
     }
 
-    try:
-        response = requests.post(url, headers=headers, json=payload)
+    # --- ESTRATÉGIA DE TENTATIVAS (Fallback) ---
+    # Vamos tentar combinações diferentes de URL e Header até funcionar
+    
+    attempts = [
+        # Tentativa 1: Padrão v2 (A mais comum)
+        {
+            "url": "https://api.livepix.gg/v2/charges",
+            "headers": {"Authorization": raw_token, "Content-Type": "application/json"}
+        },
+        # Tentativa 2: Sem versão (Algumas contas antigas)
+        {
+            "url": "https://api.livepix.gg/charges",
+            "headers": {"Authorization": raw_token, "Content-Type": "application/json"}
+        },
+        # Tentativa 3: Usando 'Bearer' no token (Padrão OAuth)
+        {
+            "url": "https://api.livepix.gg/v2/charges",
+            "headers": {"Authorization": f"Bearer {raw_token}", "Content-Type": "application/json"}
+        }
+    ]
+
+    print(f"\n--- INICIANDO LIVEPIX ({len(attempts)} tentativas) ---")
+
+    last_error = ""
+
+    for i, attempt in enumerate(attempts):
+        url = attempt["url"]
+        headers = attempt["headers"]
         
-        # DEBUG DA RESPOSTA
-        print(f"Status Code: {response.status_code}")
-        print(f"Resposta: {response.text}")
-
-        if response.status_code in [200, 201]:
-            res_json = response.json()
-            pix_data = res_json.get("pix", {})
+        print(f"Tentativa {i+1}: {url}")
+        
+        try:
+            response = requests.post(url, headers=headers, json=payload)
             
-            # Tenta pegar a imagem e o copia-cola de diferentes locais possíveis na resposta
-            qr_image = pix_data.get("qrCodeImage") or res_json.get("qrCodeImage")
-            copia_cola = pix_data.get("string") or res_json.get("pixString") or res_json.get("payload")
+            # Se for 404 (Endpoint not found), continua para a próxima tentativa
+            if response.status_code == 404:
+                print(f"-> Falha 404 na tentativa {i+1}. Tentando próxima...")
+                last_error = f"404 em {url}"
+                continue
+                
+            # Se for 200/201 (Sucesso), processa e retorna
+            if response.status_code in [200, 201]:
+                res_json = response.json()
+                pix_data = res_json.get("pix", {})
+                
+                qr_image = pix_data.get("qrCodeImage") or res_json.get("qrCodeImage")
+                copia_cola = pix_data.get("string") or res_json.get("pixString") or res_json.get("payload")
 
-            if not qr_image or not copia_cola:
-                return False, f"API respondeu OK, mas sem dados do Pix. Resposta: {res_json}"
+                if qr_image and copia_cola:
+                    print("-> SUCESSO!")
+                    return True, {
+                        "transaction_id": res_json.get("correlationId") or correlation_id,
+                        "qr_code_image": qr_image,
+                        "copia_cola": copia_cola
+                    }
+            
+            # Se chegou aqui, é erro (mas não 404), então para e retorna o erro
+            print(f"-> Erro API: {response.status_code} - {response.text}")
+            return False, f"Erro API ({response.status_code}): {response.text}"
 
-            return True, {
-                "transaction_id": res_json.get("correlationId") or correlation_id,
-                "qr_code_image": qr_image,
-                "copia_cola": copia_cola
-            }
-        else:
-            return False, f"Erro API LivePix ({response.status_code}): {response.text}"
-    except Exception as e:
-        print(f"Erro Exceção: {str(e)}")
-        return False, str(e)
+        except Exception as e:
+            print(f"-> Exceção: {e}")
+            last_error = str(e)
+
+    return False, f"Todas as tentativas falharam. Último erro: {last_error}"
 
 def check_livepix_status(correlation_id):
     """
-    Consulta o status de uma cobrança no LivePix.
-    Retorna True se estiver PAGO (COMPLETED/PAID).
+    Consulta o status. Tenta v2 e raiz.
     """
     if "LIVEPIX" not in st.secrets: return False
     
-    token = st.secrets["LIVEPIX"]["APP_TOKEN"]
+    raw_token = st.secrets["LIVEPIX"]["APP_TOKEN"]
     
-    # Forçando URL correta também na verificação
-    url = f"https://api.livepix.gg/v2/charges?correlationId={correlation_id}"
-    
-    headers = {"Authorization": token}
+    # Tenta primeiro a v2
+    url_v2 = f"https://api.livepix.gg/v2/charges?correlationId={correlation_id}"
+    headers = {"Authorization": raw_token}
     
     try:
-        req = requests.get(url, headers=headers)
+        # Tenta v2
+        req = requests.get(url_v2, headers=headers)
+        if req.status_code == 404:
+            # Se falhar, tenta raiz
+            url_root = f"https://api.livepix.gg/charges?correlationId={correlation_id}"
+            req = requests.get(url_root, headers=headers)
+            
         if req.status_code == 200:
             data = req.json()
-            
-            # DEBUG
-            print(f"--- DEBUG CHECK STATUS ---")
-            print(f"Data: {data}")
-            
-            # A API pode retornar uma lista ou objeto único
             charge = data[0] if isinstance(data, list) and len(data) > 0 else data
             
             if isinstance(charge, dict):
