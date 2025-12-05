@@ -548,53 +548,7 @@ def check_deadlines_and_notify():
 
 # --- INTEGRAÇÃO LIVEPIX ---
 
-def create_livepix_charge(user_dict, plan_tag, amount_float, plan_name):
-    """
-    Cria uma cobrança Pix estática/dinâmica no LivePix.
-    Retorna (True, dados_pix) ou (False, erro).
-    """
-    if "LIVEPIX" not in st.secrets:
-        return False, "Configuração LIVEPIX incompleta."
-
-    token = st.secrets["LIVEPIX"]["APP_TOKEN"]
-    base_url = st.secrets["LIVEPIX"].get("API_URL", "https://api.livepix.gg/v2")
-    
-    url = f"{base_url}/charges"
-    
-    headers = {
-        "Authorization": token,
-        "Content-Type": "application/json"
-    }
-
-    # Gera um ID único para correlação
-    correlation_id = f"{user_dict['username']}_{plan_tag}_{uuid.uuid4().hex[:8]}"
-    
-    # O LivePix normalmente trabalha com valor em CENTAVOS (Inteiro)
-    amount_in_cents = int(float(amount_float) * 100)
-
-    payload = {
-        "value": amount_in_cents,
-        "correlationId": correlation_id,
-        "comment": f"Assinatura Urbano - {plan_name}"
-        # Opcional: "redirectUrl": "seusite.com" (Não usaremos pois validaremos na tela)
-    }
-
-    try:
-        response = requests.post(url, headers=headers, json=payload)
-        
-        if response.status_code in [200, 201]:
-            res_json = response.json()
-            # A estrutura de resposta do LivePix contém 'pix' com 'qrCodeImage' e 'string' (copia e cola)
-            pix_data = res_json.get("pix", {})
-            return True, {
-                "transaction_id": res_json.get("correlationId"), # Ou o ID interno do LivePix se preferir
-                "qr_code_image": pix_data.get("qrCodeImage"),
-                "copia_cola": pix_data.get("string")
-            }
-        else:
-            return False, f"Erro API LivePix: {response.text}"
-    except Exception as e:
-        return False, str(e)
+create_livepix_charge
 
 # MANTENHA A FUNÇÃO get_payment_details QUE JÁ CRIAMOS ANTERIORMENTE
 def check_livepix_status(correlation_id):
