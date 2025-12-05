@@ -1385,102 +1385,71 @@ elif menu == "📅 Calendário":
             if pdf: 
                 st.download_button("⬇️ Baixar PDF da Análise", data=pdf, file_name="analise_completa.pdf")
 
-# # # 6. ASSINATURA (CHECKOUT REDIRECT SIMPLES)
+# 6. ASSINATURA (FLUXO MANUAL / WHATSAPP)
 elif menu == "Assinatura":
-    st.title("💎 Planos & Assinaturas (Via PIX)")
+    st.title("💎 Planos & Assinaturas")
     st.info(f"Seu Plano Atual: **{PLAN_MAP.get(user['plan'], user['plan']).upper()}** | Créditos Disponíveis: {user['credits']}")
     
+    # --- CONFIGURAÇÕES DE PAGAMENTO ---
+    # Coloque aqui o link do seu perfil no LivePix ou link de pagamento geral
+    SEU_LINK_LIVEPIX = "https://livepix.gg/urbano"  
+    
+    # Coloque seu número com DDI e DDD (apenas números)
+    SEU_WHATSAPP = "5511999999999" 
+    # ----------------------------------
+
+    st.markdown("""
+    ### Como funciona:
+    1. Escolha o plano e clique em **"Pagar"** (abrirá uma nova janela).
+    2. Realize o pagamento via PIX.
+    3. Clique em **"Enviar Comprovante"** para nos avisar no WhatsApp.
+    4. Liberaremos seus créditos imediatamente após a conferência.
+    """)
+    
+    st.divider()
+
     # Lista de Planos
     plans_data = [
-        ("🥉 Plano 15", "plano_15", "R$ 29,90", 29.90, 15),
-        ("🥈 Plano 30", "plano_30", "R$ 54,90", 54.90, 30),
-        ("🥇 Plano 60", "plano_60", "R$ 96,90", 96.90, 60),
-        ("💎 Plano 90", "plano_90", "R$ 125,90", 125.90, 90),
-        ("♾️ Ilimitado (30 Dias)", "unlimited_30", "R$ 229,90", 229.90, 999999)
+        ("🥉 Plano 15", "plano_15", "R$ 29,90", 29.90),
+        ("🥈 Plano 30", "plano_30", "R$ 54,90", 54.90),
+        ("🥇 Plano 60", "plano_60", "R$ 96,90", 96.90),
+        ("💎 Plano 90", "plano_90", "R$ 125,90", 125.90),
+        ("♾️ Ilimitado (30 Dias)", "unlimited_30", "R$ 229,90", 229.90)
     ]
 
-    # --- GERENCIAMENTO DE ESTADO DO PAGAMENTO NA TELA ---
-    if "pending_payment" not in st.session_state:
-        st.session_state.pending_payment = None
-
-    # Se NÃO tiver pagamento pendente sendo mostrado, exibe os cards
-    if not st.session_state.pending_payment:
-        st.write("Escolha o pacote ideal. O pagamento é instantâneo via PIX.")
-        
-        cols = st.columns(len(plans_data)) if len(plans_data) <= 3 else st.columns(3)
-        
-        for i, (p_name, p_tag, p_price, p_val, p_credits) in enumerate(plans_data):
-            col = cols[i % 3] 
-            with col:
-                with st.container(border=True):
-                    st.markdown(f"### {p_name}")
-                    st.markdown(f"<h2 style='color: #28a745;'>{p_price}</h2>", unsafe_allow_html=True)
-                    
-                    if st.button(f"Comprar {p_name}", key=f"btn_pix_{i}", use_container_width=True):
-                        with st.spinner("Gerando QR Code Pix..."):
-                            ok, data = db.create_livepix_charge(user, p_tag, p_val, p_name)
-                            
-                            if ok:
-                                # Salva na sessão para manter o QR Code na tela
-                                st.session_state.pending_payment = {
-                                    "plan_tag": p_tag,
-                                    "plan_name": p_name,
-                                    "qr_image": data["qr_code_image"],
-                                    "copia_cola": data["copia_cola"],
-                                    "transaction_id": data["transaction_id"]
-                                }
-                                st.rerun() # Recarrega para mostrar a tela de pagamento
-                            else:
-                                st.error(f"Erro ao gerar Pix: {data}")
-
-    # Se JÁ tiver um pagamento gerado, mostra o QR Code e o botão de verificar
-    else:
-        pay_data = st.session_state.pending_payment
-        
-        st.markdown(f"### 🚀 Finalizando: {pay_data['plan_name']}")
-        
-        c1, c2 = st.columns([1, 1])
-        
-        with c1:
-            st.image(pay_data["qr_image"], caption="Escaneie no App do seu Banco", width=300)
-            
-        with c2:
-            st.warning("1. Escaneie o QR Code ou copie o código abaixo.\n2. Realize o pagamento no seu banco.\n3. Clique no botão 'Já realizei o pagamento' para liberar seu acesso.")
-            st.text_area("Pix Copia e Cola", pay_data["copia_cola"], height=100)
-            
-            # Botão para validar
-            if st.button("✅ Já realizei o pagamento", type="primary", use_container_width=True):
-                with st.spinner("Verificando com o banco..."):
-                    # Verifica no LivePix
-                    is_paid = db.check_livepix_status(pay_data["transaction_id"])
-                    
-                    if is_paid:
-                        # --- ATIVAÇÃO DO PLANO ---
-                        plan_tag = pay_data["plan_tag"]
-                        expiration = None
-                        if plan_tag == 'unlimited_30':
-                            expiration = datetime.now() + timedelta(days=30)
-                        
-                        # Atualiza Banco de Dados
-                        db.admin_update_plan(user['username'], plan_tag, expires_at=expiration)
-                        # Opcional: Zerar créditos usados
-                        db.admin_set_credits_used(user['username'], 0)
-                        
-                        # Atualiza Sessão Local
-                        st.session_state.user['plan'] = plan_tag
-                        st.session_state.user['credits'] = 0
-                        
-                        st.balloons()
-                        st.success(f"Sucesso! Plano {pay_data['plan_name']} ativado.")
-                        
-                        # Limpa estado do pagamento
-                        st.session_state.pending_payment = None
-                        time.sleep(3)
-                        st.rerun()
-                    else:
-                        st.error("O pagamento ainda não foi confirmado pelo LivePix. Aguarde alguns segundos e tente novamente.")
-            
-            st.markdown("---")
-            if st.button("Cancelar / Voltar"):
-                st.session_state.pending_payment = None
-                st.rerun()
+    cols = st.columns(len(plans_data)) if len(plans_data) <= 3 else st.columns(3)
+    
+    for i, (p_name, p_tag, p_str_price, p_val) in enumerate(plans_data):
+        col = cols[i % 3] 
+        with col:
+            with st.container(border=True):
+                st.markdown(f"### {p_name}")
+                st.markdown(f"<h2 style='color: #28a745;'>{p_str_price}</h2>", unsafe_allow_html=True)
+                
+                # Botão 1: Link de Pagamento (Abre nova aba)
+                # Você pode criar links específicos no LivePix para valores exatos se quiser,
+                # ou usar o link genérico e o cliente digita o valor.
+                st.link_button(
+                    f"💸 Pagar {p_str_price}", 
+                    url=SEU_LINK_LIVEPIX, 
+                    type="primary", 
+                    use_container_width=True
+                )
+                
+                st.write("") # Espaço
+                
+                # Monta a mensagem do WhatsApp
+                msg_wpp = f"Olá! Sou o usuário *{user['username']}* ({user['email']}).\n" \
+                          f"Acabei de pagar o *{p_name}* ({p_str_price}).\n" \
+                          f"Segue o comprovante para liberação."
+                
+                import urllib.parse
+                msg_encoded = urllib.parse.quote(msg_wpp)
+                link_wpp = f"https://wa.me/{SEU_WHATSAPP}?text={msg_encoded}"
+                
+                # Botão 2: Enviar Comprovante
+                st.link_button(
+                    "📱 Enviar Comprovante", 
+                    url=link_wpp, 
+                    use_container_width=True
+                )
