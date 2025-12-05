@@ -1385,71 +1385,71 @@ elif menu == "📅 Calendário":
             if pdf: 
                 st.download_button("⬇️ Baixar PDF da Análise", data=pdf, file_name="analise_completa.pdf")
 
-# 6. ASSINATURA (FLUXO MANUAL / WHATSAPP)
+# 6. ASSINATURA (ATUALIZADO PARA MERCADO PAGO)
 elif menu == "Assinatura":
     st.title("💎 Planos & Assinaturas")
-    st.info(f"Seu Plano Atual: **{PLAN_MAP.get(user['plan'], user['plan']).upper()}** | Créditos Disponíveis: {user['credits']}")
+    st.info(f"Seu Plano Atual: **{PLAN_MAP.get(user.get('plan'), user.get('plan', 'free')).upper()}** | Créditos Disponíveis: {user.get('credits', 0)}")
     
-    # --- CONFIGURAÇÕES DE PAGAMENTO ---
-    # Coloque aqui o link do seu perfil no LivePix ou link de pagamento geral
-    SEU_LINK_LIVEPIX = "https://livepix.gg/urbano"  
-    
-    # Coloque seu número com DDI e DDD (apenas números)
+    # --- CONFIGURAÇÕES DE CONTATO ---
+    # Coloque seu número com DDI e DDD (apenas números) para o suporte/comprovante
     SEU_WHATSAPP = "5511999999999" 
     # ----------------------------------
 
     st.markdown("""
     ### Como funciona:
-    1. Escolha o plano e clique em **"Pagar"** (abrirá uma nova janela).
-    2. Realize o pagamento via PIX.
-    3. Clique em **"Enviar Comprovante"** para nos avisar no WhatsApp.
-    4. Liberaremos seus créditos imediatamente após a conferência.
+    1. Escolha o plano e clique em **"Pagar"** (você será redirecionado para o Mercado Pago).
+    2. Realize o pagamento com segurança.
+    3. Após o pagamento, caso seus créditos não entrem automaticamente em instantes, clique em **"Enviar Comprovante"**.
     """)
     
     st.divider()
 
-    # Lista de Planos
+    # Lista Completa de Planos com LINKS DO MERCADO PAGO
+    # Estrutura: (Nome, Tag, Preço Visual, Preço Float, Link MP)
     plans_data = [
-        ("🥉 Plano 15", "plano_15", "R$ 29,90", 29.90),
-        ("🥈 Plano 30", "plano_30", "R$ 54,90", 54.90),
-        ("🥇 Plano 60", "plano_60", "R$ 96,90", 96.90),
-        ("💎 Plano 90", "plano_90", "R$ 125,90", 125.90),
-        ("♾️ Ilimitado (30 Dias)", "unlimited_30", "R$ 229,90", 229.90)
+        ("🥉 Plano 15", "plano_15", "R$ 29,90", 29.90, "https://mpago.la/2iEYifv"),
+        ("🥈 Plano 30", "plano_30", "R$ 54,90", 54.90, "https://mpago.la/2Mzfs4U"),
+        ("🥇 Plano 60", "plano_60", "R$ 96,90", 96.90, "https://mpago.li/13KHDPS"),
+        ("💎 Plano 90", "plano_90", "R$ 125,90", 125.90, "https://mpago.li/2ptqrY4"),
+        ("♾️ Ilimitado (30 Dias)", "unlimited_30", "R$ 229,90", 229.90, "https://mpago.li/1q8Eiev")
     ]
 
+    # Distribuição das colunas
     cols = st.columns(len(plans_data)) if len(plans_data) <= 3 else st.columns(3)
     
-    for i, (p_name, p_tag, p_str_price, p_val) in enumerate(plans_data):
+    # Adicionado p_link na descompactação
+    for i, (p_name, p_tag, p_str_price, p_val, p_link) in enumerate(plans_data):
         col = cols[i % 3] 
         with col:
             with st.container(border=True):
                 st.markdown(f"### {p_name}")
-                st.markdown(f"<h2 style='color: #28a745;'>{p_str_price}</h2>", unsafe_allow_html=True)
+                st.markdown(f"<h2 style='color: #009EE3;'>{p_str_price}</h2>", unsafe_allow_html=True) # Azul Mercado Pago
                 
-                # Botão 1: Link de Pagamento (Abre nova aba)
-                # Você pode criar links específicos no LivePix para valores exatos se quiser,
-                # ou usar o link genérico e o cliente digita o valor.
+                # Botão 1: Link de Pagamento ESPECÍFICO (Abre nova aba)
                 st.link_button(
                     f"💸 Pagar {p_str_price}", 
-                    url=SEU_LINK_LIVEPIX, 
+                    url=p_link,  # <--- AQUI USA O LINK DO PLANO ESPECÍFICO
                     type="primary", 
                     use_container_width=True
                 )
                 
                 st.write("") # Espaço
                 
-                # Monta a mensagem do WhatsApp
-                msg_wpp = f"Olá! Sou o usuário *{user['username']}* ({user['email']}).\n" \
-                          f"Acabei de pagar o *{p_name}* ({p_str_price}).\n" \
-                          f"Segue o comprovante para liberação."
+                # Dados para mensagem de suporte
+                u_name = user.get('username', 'Usuario')
+                u_email = user.get('email', 'Email não idenf.')
+                
+                msg_wpp = f"Olá! Sou o usuário *{u_name}* ({u_email}).\n" \
+                          f"Acabei de pagar o *{p_name}* ({p_str_price}) via Mercado Pago.\n" \
+                          f"Gostaria de solicitar a liberação ou suporte."
                 
                 import urllib.parse
                 msg_encoded = urllib.parse.quote(msg_wpp)
                 link_wpp = f"https://wa.me/{SEU_WHATSAPP}?text={msg_encoded}"
                 
-                # Botão 2: Enviar Comprovante
+                # Botão 2: Suporte / Comprovante
                 st.link_button(
-                    "📱 Enviar Comprovante", 
+                    "📱 Suporte / Comprovante", 
                     url=link_wpp, 
                     use_container_width=True
                 )
