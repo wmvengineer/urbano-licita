@@ -566,8 +566,9 @@ def get_pagarme_auth():
 def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, address_data, user_phone, user_email):
     """
     Cria pedido no Pagar.me V5.
+    Se o link não vier na criação do pedido, gera um checkout avulso para o ID criado.
     """
-    url = "https://api.pagar.me/core/v5/orders"
+    base_url = "https://api.pagar.me/core/v5/orders"
     amount_cents = int(amount_float * 100)
     
     # --- 1. PREPARAÇÃO DOS DADOS ---
@@ -602,12 +603,12 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, addres
         "line_2": "Sem complemento"
     }
 
-    # --- 2. CRIAÇÃO DO PEDIDO ---
+    # --- 2. TENTATIVA 1: CRIAR PEDIDO + CHECKOUT JUNTOS ---
     
     payload = {
         "customer": {
             "name": user_data.get('name', 'Cliente Urbano')[:64],
-            "email": user_email, # <--- Usa o e-mail preenchido no formulário
+            "email": user_email,
             "document": doc_number,
             "type": customer_type,
             "phones": {"mobile_phone": phone_data},
@@ -625,9 +626,8 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, addres
             "payment_methods": ["credit_card", "pix"], 
             "success_url": "https://urbano-licita-5idyvxrxmw58ucexzbuwwm.streamlit.app/",
             "skip_checkout_success_page": False,
-            # Configurações para evitar que o Pagar.me bloqueie o link por validação
             "customer_editable": True,
-            "billing_address_editable": True, 
+            "billing_address_editable": True,
             "billing_address": user_address,
             "pix": {"expires_in": 3600}
         },
@@ -638,27 +638,49 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, addres
     }
 
     try:
-        response = requests.post(url, headers=get_pagarme_auth(), json=payload)
+        response = requests.post(base_url, headers=get_pagarme_auth(), json=payload)
         
-        # Proteção contra erro de JSON (Expecting value)
         try:
             resp_json = response.json()
         except:
-            print(f"ERRO NÃO-JSON DO PAGARME: {response.text}")
-            return False, f"Erro na API Pagar.me (Status {response.status_code}). Tente novamente.", None
-        
+            return False, f"Erro Fatal Pagar.me: {response.status_code} - {response.text}", None
+
+        # SUCESSO NA CRIAÇÃO DO PEDIDO
         if response.status_code == 200:
             order_id = resp_json.get('id')
             checkouts = resp_json.get('checkouts', [])
             
+            # CASO A: Link veio corretamente
             if checkouts:
                 return True, checkouts[0].get('payment_url'), order_id
+            
+            # CASO B: Link não veio (Seu problema atual). Vamos gerar manualmente.
             else:
-                # Se cair aqui, mostra o JSON para debug sem quebrar o app
-                st.error("Pedido aceito, mas link não gerado.")
-                st.json(resp_json)
-                return False, "Erro na geração do link.", None
+                print(f"--- PEDIDO {order_id} CRIADO SEM LINK. GERANDO CHECKOUT AVULSO... ---")
+                
+                # Endpoint específico para criar checkout em pedido existente
+                url_rescue = f"https://api.pagar.me/core/v5/orders/{order_id}/checkouts"
+                
+                payload_rescue = {
+                    "payment_methods": ["credit_card", "pix"],
+                    "expires_in": 120,
+                    "success_url": "https://urbano-licita-5idyvxrxmw58ucexzbuwwm.streamlit.app/",
+                    "customer_editable": True,
+                    "billing_address_editable": True,
+                    "skip_checkout_success_page": False
+                }
+                
+                resp_rescue = requests.post(url_rescue, headers=get_pagarme_auth(), json=payload_rescue)
+                json_rescue = resp_rescue.json()
+                
+                if resp_rescue.status_code == 200:
+                    return True, json_rescue.get('payment_url'), order_id
+                else:
+                    st.error("Falha ao gerar link de pagamento (Segunda tentativa).")
+                    st.json(json_rescue)
+                    return False, "Erro na geração do link.", None
 
+        # ERRO NA CRIAÇÃO DO PEDIDO
         else:
             msg = resp_json.get('message', 'Erro API')
             if 'errors' in resp_json: msg += f" | {resp_json['errors']}"
