@@ -565,43 +565,35 @@ def get_pagarme_auth():
 
 def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, address_data, user_phone):
     """
-    Cria pedido no Pagar.me V5 com endereço e telefone reais do usuário.
+    Cria pedido no Pagar.me V5.
+    Se a criação automática do link falhar, força a geração de um novo checkout.
     """
-    url = "https://api.pagar.me/core/v5/orders"
+    base_url = "https://api.pagar.me/core/v5/orders"
     amount_cents = int(amount_float * 100)
     
-    # 1. Validação do Documento
+    # --- 1. PREPARAÇÃO DOS DADOS ---
+    
+    # Documento
     raw_doc = str(user_data.get('cnpj', ''))
     doc_number = re.sub(r'\D', '', raw_doc)
     if not doc_number: doc_number = "00000000000"
     customer_type = "company" if len(doc_number) > 11 else "individual"
     
-    # 2. Tratamento do Telefone (Real do Usuário)
-    # Remove tudo que não for número
+    # Telefone
     clean_phone = re.sub(r'\D', '', str(user_phone))
-    
-    # Validação simples: precisa ter DDD + Número (10 ou 11 dígitos)
     if len(clean_phone) < 10:
-        # Fallback de segurança caso o usuário digite algo errado, para não travar a API
-        ddd = "11"
-        number = "987654321"
+        ddd, number = "11", "987654321"
     else:
-        ddd = clean_phone[:2]      # Os 2 primeiros são o DDD
-        number = clean_phone[2:]   # O resto é o número
+        ddd, number = clean_phone[:2], clean_phone[2:]
 
-    phone_data = {
-        "country_code": "55", 
-        "area_code": ddd, 
-        "number": number
-    }
+    phone_data = {"country_code": "55", "area_code": ddd, "number": number}
     
-    # 3. Tratamento do CEP
+    # CEP
     clean_cep = re.sub(r'\D', '', str(address_data['cep']))
-    if len(clean_cep) != 8: clean_cep = "01310940" # Fallback SP
+    if len(clean_cep) != 8: clean_cep = "01310940" 
 
-    # 4. Monta o Endereço
+    # Endereço
     line_1_fmt = f"{address_data['rua']}, {address_data['numero']}, {address_data['bairro']}"
-    
     user_address = {
         "country": "BR",
         "state": address_data['uf'],
@@ -611,15 +603,15 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, addres
         "line_2": "Sem complemento"
     }
 
+    # --- 2. CRIAÇÃO DO PEDIDO (TENTATIVA 1) ---
+    
     payload = {
         "customer": {
             "name": user_data.get('name', 'Cliente Urbano')[:64],
             "email": user_data.get('email'),
             "document": doc_number,
             "type": customer_type,
-            "phones": {
-                "mobile_phone": phone_data
-            },
+            "phones": {"mobile_phone": phone_data},
             "address": user_address
         },
         "items": [{
@@ -634,8 +626,8 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, addres
             "payment_methods": ["credit_card", "pix"], 
             "success_url": "https://urbano-licita-5idyvxrxmw58ucexzbuwwm.streamlit.app/",
             "skip_checkout_success_page": False,
-            "customer_editable": False,
-            "billing_address_editable": False,
+            "customer_editable": True,        # <--- MUDANÇA: Permite editar cliente
+            "billing_address_editable": True, # <--- MUDANÇA: Permite editar endereço (Evita erros)
             "billing_address": user_address,
             "pix": {"expires_in": 3600}
         },
@@ -646,17 +638,41 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, addres
     }
 
     try:
-        response = requests.post(url, headers=get_pagarme_auth(), json=payload)
+        response = requests.post(base_url, headers=get_pagarme_auth(), json=payload)
         resp_json = response.json()
         
         if response.status_code == 200:
+            order_id = resp_json.get('id')
             checkouts = resp_json.get('checkouts', [])
+            
+            # CENÁRIO A: Deu tudo certo de primeira
             if checkouts:
-                return True, checkouts[0].get('payment_url'), resp_json.get('id')
+                return True, checkouts[0].get('payment_url'), order_id
+            
+            # CENÁRIO B: Pedido criado, mas sem link (O problema atual)
+            # Vamos forçar a criação do checkout manualmente para esse pedido
             else:
-                st.error("Erro Pagar.me (Sem Link):")
-                st.json(resp_json)
-                return False, "Pedido criado sem link. Verifique o erro acima.", None
+                print(f"--- TENTANDO FORÇAR CHECKOUT PARA PEDIDO {order_id} ---")
+                url_force = f"https://api.pagar.me/core/v5/orders/{order_id}/checkouts"
+                payload_force = {
+                    "payment_methods": ["credit_card", "pix"],
+                    "expires_in": 120,
+                    "billing_address_editable": True,
+                    "customer_editable": True,
+                    "success_url": "https://urbano-licita-5idyvxrxmw58ucexzbuwwm.streamlit.app/",
+                    "pix": {"expires_in": 3600}
+                }
+                
+                resp_force = requests.post(url_force, headers=get_pagarme_auth(), json=payload_force)
+                json_force = resp_force.json()
+                
+                if resp_force.status_code == 200:
+                    return True, json_force.get('payment_url'), order_id
+                else:
+                    st.error("Erro ao forçar checkout:")
+                    st.json(json_force)
+                    return False, "Erro na segunda tentativa de gerar link.", None
+
         else:
             msg = resp_json.get('message', 'Erro API')
             if 'errors' in resp_json: msg += f" | {resp_json['errors']}"
