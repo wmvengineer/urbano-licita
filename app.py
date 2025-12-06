@@ -221,6 +221,59 @@ def render_status_controls(item_id, current_status, current_note):
             db.update_analysis_status(st.session_state.user['username'], item_id, new_status, new_note)
             st.toast("Observação salva com sucesso!")
 
+# --- FUNÇÃO DO MODAL DE PAGAMENTO ---
+@st.dialog("Dados para Faturamento")
+def payment_dialog(plan_name, plan_tag, plan_val):
+    st.write(f"Você está adquirindo: **{plan_name}** (R$ {plan_val})")
+    st.caption("Precisamos do seu endereço para gerar o link fiscal do Pagar.me.")
+    
+    with st.form("address_form"):
+        cep = st.text_input("CEP", placeholder="00000-000")
+        col_r, col_n = st.columns([3, 1])
+        rua = col_r.text_input("Rua/Logradouro")
+        num = col_n.text_input("Número")
+        
+        col_b, col_c, col_e = st.columns([2, 2, 1])
+        bairro = col_b.text_input("Bairro")
+        cidade = col_c.text_input("Cidade")
+        uf = col_e.selectbox("UF", ["SP", "RJ", "MG", "RS", "PR", "SC", "BA", "PE", "CE", "DF", "GO", "ES", "MT", "MS", "MA", "PB", "RN", "AM", "AL", "PI", "SE", "RO", "TO", "AC", "AP", "RR", "PA"])
+        
+        submitted = st.form_submit_button("✅ Confirmar e Gerar Link", type="primary")
+        
+        if submitted:
+            if not cep or not rua or not num or not cidade:
+                st.error("Preencha todos os campos obrigatórios.")
+            else:
+                # Monta o dicionário de endereço
+                addr_dict = {
+                    "cep": cep, "rua": rua, "numero": num,
+                    "bairro": bairro, "cidade": cidade, "uf": uf
+                }
+                
+                with st.spinner("Conectando ao Pagar.me..."):
+                    # Chama a função no DB passando o endereço
+                    ok, url_checkout, order_id = db.create_pagarme_checkout(
+                        st.session_state.user, 
+                        plan_tag, 
+                        plan_name, 
+                        plan_val,
+                        addr_dict  # <--- Passamos o endereço aqui
+                    )
+                    
+                    if ok:
+                        st.session_state.pending_order_id = order_id
+                        st.success("Link gerado!")
+                        st.markdown(f"""
+                            <a href="{url_checkout}" target="_blank" style="text-decoration:none;">
+                                <div style="background-color:#82C91E; color:white; padding:15px; border-radius:8px; text-align:center; font-weight:bold; margin-top:10px; margin-bottom:10px;">
+                                    👉 CLIQUE AQUI PARA PAGAR
+                                </div>
+                            </a>
+                        """, unsafe_allow_html=True)
+                        st.info("Após pagar, feche esta janela e clique em 'JÁ REALIZEI O PAGAMENTO' no topo da página.")
+                    else:
+                        st.error(f"Erro: {url_checkout}")
+
 # --- SESSÃO & COOKIES ---
 import time
 
@@ -1381,60 +1434,7 @@ elif menu == "📅 Calendário":
             if pdf: 
                 st.download_button("⬇️ Baixar PDF da Análise", data=pdf, file_name="analise_completa.pdf")
 
-# --- FUNÇÃO DO MODAL DE PAGAMENTO ---
-@st.dialog("Dados para Faturamento")
-def payment_dialog(plan_name, plan_tag, plan_val):
-    st.write(f"Você está adquirindo: **{plan_name}** (R$ {plan_val})")
-    st.caption("Precisamos do seu endereço para gerar o link fiscal do Pagar.me.")
-    
-    with st.form("address_form"):
-        cep = st.text_input("CEP", placeholder="00000-000")
-        col_r, col_n = st.columns([3, 1])
-        rua = col_r.text_input("Rua/Logradouro")
-        num = col_n.text_input("Número")
-        
-        col_b, col_c, col_e = st.columns([2, 2, 1])
-        bairro = col_b.text_input("Bairro")
-        cidade = col_c.text_input("Cidade")
-        uf = col_e.selectbox("UF", ["SP", "RJ", "MG", "RS", "PR", "SC", "BA", "PE", "CE", "DF", "GO", "ES", "MT", "MS", "MA", "PB", "RN", "AM", "AL", "PI", "SE", "RO", "TO", "AC", "AP", "RR", "PA"])
-        
-        submitted = st.form_submit_button("✅ Confirmar e Gerar Link", type="primary")
-        
-        if submitted:
-            if not cep or not rua or not num or not cidade:
-                st.error("Preencha todos os campos obrigatórios.")
-            else:
-                # Monta o dicionário de endereço
-                addr_dict = {
-                    "cep": cep, "rua": rua, "numero": num,
-                    "bairro": bairro, "cidade": cidade, "uf": uf
-                }
-                
-                with st.spinner("Conectando ao Pagar.me..."):
-                    # Chama a função no DB passando o endereço
-                    ok, url_checkout, order_id = db.create_pagarme_checkout(
-                        st.session_state.user, 
-                        plan_tag, 
-                        plan_name, 
-                        plan_val,
-                        addr_dict  # <--- Passamos o endereço aqui
-                    )
-                    
-                    if ok:
-                        st.session_state.pending_order_id = order_id
-                        st.success("Link gerado!")
-                        st.markdown(f"""
-                            <a href="{url_checkout}" target="_blank" style="text-decoration:none;">
-                                <div style="background-color:#82C91E; color:white; padding:15px; border-radius:8px; text-align:center; font-weight:bold; margin-top:10px; margin-bottom:10px;">
-                                    👉 CLIQUE AQUI PARA PAGAR
-                                </div>
-                            </a>
-                        """, unsafe_allow_html=True)
-                        st.info("Após pagar, feche esta janela e clique em 'JÁ REALIZEI O PAGAMENTO' no topo da página.")
-                    else:
-                        st.error(f"Erro: {url_checkout}")
-
-# 6. ASSINATURA (ATUALIZADO PARA MERCADO PAGO)
+# 6. ASSINATURA
 elif menu == "Assinatura":
     st.title("💎 Planos & Assinaturas")
     st.info(f"Seu Plano Atual: **{PLAN_MAP.get(user.get('plan'), user.get('plan', 'free')).upper()}** | Créditos: {user.get('credits', 0)}")
@@ -1442,14 +1442,14 @@ elif menu == "Assinatura":
     st.markdown("""
     ### Como funciona:
     1. Clique em **"Comprar"** no plano desejado.
-    2. Realize o pagamento (Cartão ou Pix) na página segura do Pagar.me.
-    3. Ao retornar, clique no botão **"JÁ REALIZEI O PAGAMENTO"** que aparecerá no topo.
+    2. Preencha seus dados de endereço (obrigatório para nota fiscal/segurança).
+    3. Realize o pagamento (Cartão ou Pix) no ambiente seguro do Pagar.me.
+    4. Ao retornar, clique no botão **"JÁ REALIZEI O PAGAMENTO"** que aparecerá no topo.
     """)
     
     st.divider()
 
-    # DADOS DOS PLANOS (Nome, Tag Interna, Preço Texto, Preço Float)
-    # Note que removemos os links fixos antigos do Mercado Pago
+    # DADOS DOS PLANOS
     plans_data = [
         ("🥉 Plano 15", "plano_15", "R$ 29,90", 29.90),
         ("🥈 Plano 30", "plano_30", "R$ 54,90", 54.90),
@@ -1467,17 +1467,9 @@ elif menu == "Assinatura":
                 st.markdown(f"### {p_name}")
                 st.markdown(f"<h2 style='color: #82C91E;'>{p_str_price}</h2>", unsafe_allow_html=True)
                 
-                # BOTÃO QUE GERA O LINK DO PAGAR.ME
-                for i, (p_name, p_tag, p_str_price, p_val) in enumerate(plans_data):
-        col = cols[i % 3] 
-        with col:
-            with st.container(border=True):
-                st.markdown(f"### {p_name}")
-                st.markdown(f"<h2 style='color: #82C91E;'>{p_str_price}</h2>", unsafe_allow_html=True)
-                
                 # BOTÃO ABRE O MODAL
                 if st.button(f"Comprar {p_name}", key=f"btn_{p_tag}", use_container_width=True, type="primary"):
-                    payment_dialog(p_name, p_tag, p_val) # <--- Chama a função do Modal definida acima
+                    payment_dialog(p_name, p_tag, p_val) # <--- Chama a função movida para o topo
 
     st.divider()
     st.caption("Pagamentos processados via Pagar.me (Stone Co). Ambiente Seguro.")
