@@ -221,16 +221,21 @@ def render_status_controls(item_id, current_status, current_note):
             db.update_analysis_status(st.session_state.user['username'], item_id, new_status, new_note)
             st.toast("Observação salva com sucesso!")
 
-# --- FUNÇÃO DO MODAL DE PAGAMENTO (ATUALIZADA) ---
+# --- FUNÇÃO DO MODAL DE PAGAMENTO (COM EMAIL) ---
 @st.dialog("Dados para Faturamento")
 def payment_dialog(plan_name, plan_tag, plan_val):
     st.write(f"Você está adquirindo: **{plan_name}** (R$ {plan_val})")
     st.caption("Preencha seus dados para gerar o link seguro do Pagar.me.")
     
     with st.form("address_form"):
-        # Campo novo de Telefone
-        celular = st.text_input("Celular com DDD (Whatsapp)", placeholder="11999999999", max_chars=15)
+        # Campos de Contato
+        c_email, c_phone = st.columns([2, 1])
+        # Pega o email da sessão como padrão, mas permite editar
+        default_email = st.session_state.user.get('email', '')
+        val_email = c_email.text_input("E-mail para Recibo", value=default_email)
+        val_phone = c_phone.text_input("Celular (com DDD)", placeholder="11999999999")
         
+        # Campos de Endereço
         cep = st.text_input("CEP", placeholder="00000-000")
         col_r, col_n = st.columns([3, 1])
         rua = col_r.text_input("Rua/Logradouro")
@@ -244,26 +249,29 @@ def payment_dialog(plan_name, plan_tag, plan_val):
         submitted = st.form_submit_button("✅ Confirmar e Gerar Link", type="primary")
         
         if submitted:
-            # Validação: Telefone é obrigatório agora
-            if not celular or len(celular) < 10:
-                st.error("Digite um número de celular válido com DDD.")
+            # Validações
+            if not val_email or "@" not in val_email:
+                st.error("Digite um e-mail válido.")
+            elif not val_phone or len(val_phone) < 10:
+                st.error("Digite um celular válido (DDD + Número).")
             elif not cep or not rua or not num or not cidade:
-                st.error("Preencha todos os campos de endereço.")
+                st.error("Preencha o endereço completo.")
             else:
                 addr_dict = {
                     "cep": cep, "rua": rua, "numero": num,
                     "bairro": bairro, "cidade": cidade, "uf": uf
                 }
                 
-                with st.spinner("Conectando ao Pagar.me..."):
-                    # Passamos o celular como novo argumento
+                with st.spinner("Gerando Link Pagar.me..."):
+                    # Passamos o email e o telefone para a função
                     ok, url_checkout, order_id = db.create_pagarme_checkout(
                         st.session_state.user, 
                         plan_tag, 
                         plan_name, 
                         plan_val,
                         addr_dict,
-                        celular  # <--- Novo argumento
+                        val_phone,
+                        val_email # <--- Novo
                     )
                     
                     if ok:
