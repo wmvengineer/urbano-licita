@@ -563,9 +563,9 @@ def get_pagarme_auth():
         st.error(f"Erro de Configuração Pagar.me: {e}")
         return {}
 
-def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, address_data):
+def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, address_data, user_phone):
     """
-    Cria pedido no Pagar.me V5 com dados validados e telefone corrigido.
+    Cria pedido no Pagar.me V5 com endereço e telefone reais do usuário.
     """
     url = "https://api.pagar.me/core/v5/orders"
     amount_cents = int(amount_float * 100)
@@ -576,20 +576,28 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, addres
     if not doc_number: doc_number = "00000000000"
     customer_type = "company" if len(doc_number) > 11 else "individual"
     
-    # 2. Telefone (Correção: Número válido para passar na validação)
-    # 999999999 costuma ser bloqueado.
+    # 2. Tratamento do Telefone (Real do Usuário)
+    # Remove tudo que não for número
+    clean_phone = re.sub(r'\D', '', str(user_phone))
+    
+    # Validação simples: precisa ter DDD + Número (10 ou 11 dígitos)
+    if len(clean_phone) < 10:
+        # Fallback de segurança caso o usuário digite algo errado, para não travar a API
+        ddd = "11"
+        number = "987654321"
+    else:
+        ddd = clean_phone[:2]      # Os 2 primeiros são o DDD
+        number = clean_phone[2:]   # O resto é o número
+
     phone_data = {
         "country_code": "55", 
-        "area_code": "11", 
-        "number": "987654321" 
+        "area_code": ddd, 
+        "number": number
     }
     
-    # 3. Tratamento rigoroso do CEP (Apenas 8 números)
-    raw_cep = str(address_data['cep'])
-    clean_cep = re.sub(r'\D', '', raw_cep)
-    if len(clean_cep) != 8:
-        # Se o CEP estiver estranho, usamos um genérico de SP para não travar o link
-        clean_cep = "01310940" 
+    # 3. Tratamento do CEP
+    clean_cep = re.sub(r'\D', '', str(address_data['cep']))
+    if len(clean_cep) != 8: clean_cep = "01310940" # Fallback SP
 
     # 4. Monta o Endereço
     line_1_fmt = f"{address_data['rua']}, {address_data['numero']}, {address_data['bairro']}"
@@ -627,7 +635,7 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, addres
             "success_url": "https://urbano-licita-5idyvxrxmw58ucexzbuwwm.streamlit.app/",
             "skip_checkout_success_page": False,
             "customer_editable": False,
-            "billing_address_editable": False, # Trava o endereço para evitar conflito
+            "billing_address_editable": False,
             "billing_address": user_address,
             "pix": {"expires_in": 3600}
         },
@@ -646,11 +654,9 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, addres
             if checkouts:
                 return True, checkouts[0].get('payment_url'), resp_json.get('id')
             else:
-                # --- MODO DEBUG ---
-                # Se falhar, isso vai mostrar o JSON do Pagar.me na tela do usuário
-                st.error("Erro interno do Pagar.me. Veja os detalhes abaixo:")
-                st.json(resp_json) 
-                return False, "Pedido criado sem link. Envie o print acima para o suporte.", None
+                st.error("Erro Pagar.me (Sem Link):")
+                st.json(resp_json)
+                return False, "Pedido criado sem link. Verifique o erro acima.", None
         else:
             msg = resp_json.get('message', 'Erro API')
             if 'errors' in resp_json: msg += f" | {resp_json['errors']}"

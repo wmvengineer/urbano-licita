@@ -221,13 +221,16 @@ def render_status_controls(item_id, current_status, current_note):
             db.update_analysis_status(st.session_state.user['username'], item_id, new_status, new_note)
             st.toast("Observação salva com sucesso!")
 
-# --- FUNÇÃO DO MODAL DE PAGAMENTO ---
+# --- FUNÇÃO DO MODAL DE PAGAMENTO (ATUALIZADA) ---
 @st.dialog("Dados para Faturamento")
 def payment_dialog(plan_name, plan_tag, plan_val):
     st.write(f"Você está adquirindo: **{plan_name}** (R$ {plan_val})")
-    st.caption("Precisamos do seu endereço para gerar o link fiscal do Pagar.me.")
+    st.caption("Preencha seus dados para gerar o link seguro do Pagar.me.")
     
     with st.form("address_form"):
+        # Campo novo de Telefone
+        celular = st.text_input("Celular com DDD (Whatsapp)", placeholder="11999999999", max_chars=15)
+        
         cep = st.text_input("CEP", placeholder="00000-000")
         col_r, col_n = st.columns([3, 1])
         rua = col_r.text_input("Rua/Logradouro")
@@ -241,23 +244,26 @@ def payment_dialog(plan_name, plan_tag, plan_val):
         submitted = st.form_submit_button("✅ Confirmar e Gerar Link", type="primary")
         
         if submitted:
-            if not cep or not rua or not num or not cidade:
-                st.error("Preencha todos os campos obrigatórios.")
+            # Validação: Telefone é obrigatório agora
+            if not celular or len(celular) < 10:
+                st.error("Digite um número de celular válido com DDD.")
+            elif not cep or not rua or not num or not cidade:
+                st.error("Preencha todos os campos de endereço.")
             else:
-                # Monta o dicionário de endereço
                 addr_dict = {
                     "cep": cep, "rua": rua, "numero": num,
                     "bairro": bairro, "cidade": cidade, "uf": uf
                 }
                 
                 with st.spinner("Conectando ao Pagar.me..."):
-                    # Chama a função no DB passando o endereço
+                    # Passamos o celular como novo argumento
                     ok, url_checkout, order_id = db.create_pagarme_checkout(
                         st.session_state.user, 
                         plan_tag, 
                         plan_name, 
                         plan_val,
-                        addr_dict  # <--- Passamos o endereço aqui
+                        addr_dict,
+                        celular  # <--- Novo argumento
                     )
                     
                     if ok:
