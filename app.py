@@ -1381,6 +1381,59 @@ elif menu == "📅 Calendário":
             if pdf: 
                 st.download_button("⬇️ Baixar PDF da Análise", data=pdf, file_name="analise_completa.pdf")
 
+# --- FUNÇÃO DO MODAL DE PAGAMENTO ---
+@st.dialog("Dados para Faturamento")
+def payment_dialog(plan_name, plan_tag, plan_val):
+    st.write(f"Você está adquirindo: **{plan_name}** (R$ {plan_val})")
+    st.caption("Precisamos do seu endereço para gerar o link fiscal do Pagar.me.")
+    
+    with st.form("address_form"):
+        cep = st.text_input("CEP", placeholder="00000-000")
+        col_r, col_n = st.columns([3, 1])
+        rua = col_r.text_input("Rua/Logradouro")
+        num = col_n.text_input("Número")
+        
+        col_b, col_c, col_e = st.columns([2, 2, 1])
+        bairro = col_b.text_input("Bairro")
+        cidade = col_c.text_input("Cidade")
+        uf = col_e.selectbox("UF", ["SP", "RJ", "MG", "RS", "PR", "SC", "BA", "PE", "CE", "DF", "GO", "ES", "MT", "MS", "MA", "PB", "RN", "AM", "AL", "PI", "SE", "RO", "TO", "AC", "AP", "RR", "PA"])
+        
+        submitted = st.form_submit_button("✅ Confirmar e Gerar Link", type="primary")
+        
+        if submitted:
+            if not cep or not rua or not num or not cidade:
+                st.error("Preencha todos os campos obrigatórios.")
+            else:
+                # Monta o dicionário de endereço
+                addr_dict = {
+                    "cep": cep, "rua": rua, "numero": num,
+                    "bairro": bairro, "cidade": cidade, "uf": uf
+                }
+                
+                with st.spinner("Conectando ao Pagar.me..."):
+                    # Chama a função no DB passando o endereço
+                    ok, url_checkout, order_id = db.create_pagarme_checkout(
+                        st.session_state.user, 
+                        plan_tag, 
+                        plan_name, 
+                        plan_val,
+                        addr_dict  # <--- Passamos o endereço aqui
+                    )
+                    
+                    if ok:
+                        st.session_state.pending_order_id = order_id
+                        st.success("Link gerado!")
+                        st.markdown(f"""
+                            <a href="{url_checkout}" target="_blank" style="text-decoration:none;">
+                                <div style="background-color:#82C91E; color:white; padding:15px; border-radius:8px; text-align:center; font-weight:bold; margin-top:10px; margin-bottom:10px;">
+                                    👉 CLIQUE AQUI PARA PAGAR
+                                </div>
+                            </a>
+                        """, unsafe_allow_html=True)
+                        st.info("Após pagar, feche esta janela e clique em 'JÁ REALIZEI O PAGAMENTO' no topo da página.")
+                    else:
+                        st.error(f"Erro: {url_checkout}")
+
 # 6. ASSINATURA (ATUALIZADO PARA MERCADO PAGO)
 elif menu == "Assinatura":
     st.title("💎 Planos & Assinaturas")
@@ -1415,34 +1468,16 @@ elif menu == "Assinatura":
                 st.markdown(f"<h2 style='color: #82C91E;'>{p_str_price}</h2>", unsafe_allow_html=True)
                 
                 # BOTÃO QUE GERA O LINK DO PAGAR.ME
+                for i, (p_name, p_tag, p_str_price, p_val) in enumerate(plans_data):
+        col = cols[i % 3] 
+        with col:
+            with st.container(border=True):
+                st.markdown(f"### {p_name}")
+                st.markdown(f"<h2 style='color: #82C91E;'>{p_str_price}</h2>", unsafe_allow_html=True)
+                
+                # BOTÃO ABRE O MODAL
                 if st.button(f"Comprar {p_name}", key=f"btn_{p_tag}", use_container_width=True, type="primary"):
-                    with st.spinner("Gerando Link Seguro..."):
-                        ok, url_checkout, order_id = db.create_pagarme_checkout(
-                            st.session_state.user, 
-                            p_tag, 
-                            p_name, 
-                            p_val
-                        )
-                        
-                        if ok:
-                            # Salva o ID na sessão para validar depois
-                            st.session_state.pending_order_id = order_id
-                            
-                            # Mostra o link para o usuário clicar
-                            st.success("Link gerado com sucesso!")
-                            st.markdown(f"""
-                                <a href="{url_checkout}" target="_blank" style="text-decoration:none;">
-                                    <div style="background-color:#82C91E; color:white; padding:15px; border-radius:8px; text-align:center; font-weight:bold; margin-top:10px;">
-                                        👉 CLIQUE AQUI PARA PAGAR
-                                    </div>
-                                </a>
-                            """, unsafe_allow_html=True)
-                            
-                            # Força um rerun para mostrar o aviso de validação no topo
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            st.error(f"Erro ao gerar link: {url_checkout}")
+                    payment_dialog(p_name, p_tag, p_val) # <--- Chama a função do Modal definida acima
 
     st.divider()
     st.caption("Pagamentos processados via Pagar.me (Stone Co). Ambiente Seguro.")

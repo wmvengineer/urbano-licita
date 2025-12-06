@@ -563,39 +563,46 @@ def get_pagarme_auth():
         st.error(f"Erro de Configuração Pagar.me: {e}")
         return {}
 
-def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float):
-    """Cria pedido no Pagar.me e retorna URL de pagamento."""
+def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float, address_data):
+    """
+    Cria pedido no Pagar.me V5 usando endereço fornecido pelo usuário.
+    address_data deve ser um dict com: rua, numero, bairro, cidade, uf, cep
+    """
     url = "https://api.pagar.me/core/v5/orders"
     amount_cents = int(amount_float * 100)
     
-    # 1. Tratamento e Validação do Documento (CPF ou CNPJ)
+    # 1. Tratamento do Documento
     raw_doc = str(user_data.get('cnpj', ''))
-    doc_number = re.sub(r'\D', '', raw_doc) # Remove pontos e traços
-    
-    # Fallback se não tiver documento (Use um CPF de teste gerado se estiver em modo Teste)
-    if not doc_number: 
-        doc_number = "00000000000" 
-    
-    # IMPORTANTE: Pagar.me valida o 'type' com o tamanho do documento
+    doc_number = re.sub(r'\D', '', raw_doc)
+    if not doc_number: doc_number = "00000000000"
     customer_type = "company" if len(doc_number) > 11 else "individual"
     
-    # 2. Telefone (Obrigatório e rigoroso na V5)
-    # Usando um formato que costuma passar na validação
-    phone_data = {
-        "country_code": "55", 
-        "area_code": "11", 
-        "number": "988887777"
+    # 2. Telefone
+    phone_data = {"country_code": "55", "area_code": "11", "number": "999999999"}
+    
+    # 3. Monta o Endereço com os dados recebidos
+    # Pagar.me V5 usa line_1 para: "Rua, Número, Bairro" e line_2 para "Complemento"
+    line_1_fmt = f"{address_data['rua']}, {address_data['numero']}, {address_data['bairro']}"
+    
+    user_address = {
+        "country": "BR",
+        "state": address_data['uf'],
+        "city": address_data['cidade'],
+        "zip_code": re.sub(r'\D', '', address_data['cep']), # Remove traço do CEP
+        "line_1": line_1_fmt[:128], # Limite de caracteres da API
+        "line_2": "" 
     }
 
     payload = {
         "customer": {
-            "name": user_data.get('name', 'Cliente Urbano')[:64], # Limita caracteres
+            "name": user_data.get('name', 'Cliente Urbano')[:64],
             "email": user_data.get('email'),
             "document": doc_number,
-            "type": customer_type, # <--- AQUI ESTAVA O ERRO PROVAVELMENTE
+            "type": customer_type,
             "phones": {
                 "mobile_phone": phone_data
-            }
+            },
+            "address": user_address # <--- Endereço real aqui
         },
         "items": [{
             "amount": amount_cents,
@@ -605,12 +612,13 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float):
         }],
         "closed": False,
         "checkout": {
-            "expires_in": 120, # Link expira em 2 horas
-            "payment_methods": ["credit_card", "pix"], # Certifique-se que sua conta aceita isso
+            "expires_in": 120,
+            "payment_methods": ["credit_card", "pix"], 
             "success_url": "https://urbano-licita-5idyvxrxmw58ucexzbuwwm.streamlit.app/",
             "skip_checkout_success_page": False,
             "customer_editable": False,
             "billing_address_editable": True,
+            "billing_address": user_address, # Força o mesmo endereço no checkout
             "pix": {"expires_in": 3600}
         },
         "metadata": {
@@ -620,33 +628,21 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float):
     }
 
     try:
-        # Imprime no console do Streamlit para debug (veja nos logs do site)
-        print(f"--- ENVIANDO PAYLOAD PAGARME ({plan_tag}) ---")
-        
         response = requests.post(url, headers=get_pagarme_auth(), json=payload)
         resp_json = response.json()
         
-        # Imprime a resposta para você saber o que aconteceu
-        print(f"--- RESPOSTA PAGARME: {response.status_code} ---")
-        print(resp_json)
-
         if response.status_code == 200:
             checkouts = resp_json.get('checkouts', [])
             if checkouts:
                 return True, checkouts[0].get('payment_url'), resp_json.get('id')
             else:
-                # Se criou o pedido mas não gerou link, pode ser configuração da conta
-                return False, f"Erro: Pedido criado ({resp_json.get('id')}), mas sem Link de Checkout. Verifique meios de pagto no Dashboard.", None
+                return False, f"Pedido criado, mas link não gerado. Verifique se Pix/Cartão estão ativos no Dashboard.", None
         else:
-            # Retorna a mensagem de erro exata do Pagar.me
-            error_msg = resp_json.get('message', 'Erro desconhecido')
-            # Tenta pegar detalhes dos erros de validação
-            if 'errors' in resp_json:
-                error_msg += f" | Detalhes: {resp_json['errors']}"
-            return False, f"Erro API: {error_msg}", None
+            msg = resp_json.get('message', 'Erro API')
+            if 'errors' in resp_json: msg += f" | {resp_json['errors']}"
+            return False, msg, None
 
     except Exception as e:
-        print(f"--- ERRO CRÍTICO: {str(e)} ---")
         return False, str(e), None
 
 def check_pagarme_order_status(order_id):
