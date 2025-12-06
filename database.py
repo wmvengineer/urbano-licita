@@ -568,20 +568,31 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float):
     url = "https://api.pagar.me/core/v5/orders"
     amount_cents = int(amount_float * 100)
     
-    # Tratamento de CNPJ/CPF (Remove tudo que não for número)
+    # 1. Tratamento e Validação do Documento (CPF ou CNPJ)
     raw_doc = str(user_data.get('cnpj', ''))
-    doc_number = re.sub(r'\D', '', raw_doc)
-    if not doc_number: doc_number = "00000000000" # Fallback para evitar crash
+    doc_number = re.sub(r'\D', '', raw_doc) # Remove pontos e traços
     
-    # Telefone Fictício (Obrigatório na API V5 se não tiver no cadastro)
-    phone_data = {"country_code": "55", "area_code": "11", "number": "999999999"}
+    # Fallback se não tiver documento (Use um CPF de teste gerado se estiver em modo Teste)
+    if not doc_number: 
+        doc_number = "00000000000" 
+    
+    # IMPORTANTE: Pagar.me valida o 'type' com o tamanho do documento
+    customer_type = "company" if len(doc_number) > 11 else "individual"
+    
+    # 2. Telefone (Obrigatório e rigoroso na V5)
+    # Usando um formato que costuma passar na validação
+    phone_data = {
+        "country_code": "55", 
+        "area_code": "11", 
+        "number": "988887777"
+    }
 
     payload = {
         "customer": {
-            "name": user_data.get('name', 'Cliente Urbano'),
+            "name": user_data.get('name', 'Cliente Urbano')[:64], # Limita caracteres
             "email": user_data.get('email'),
             "document": doc_number,
-            "type": "individual", # Simplificação (aceita CPF ou CNPJ neste campo na V5)
+            "type": customer_type, # <--- AQUI ESTAVA O ERRO PROVAVELMENTE
             "phones": {
                 "mobile_phone": phone_data
             }
@@ -594,8 +605,8 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float):
         }],
         "closed": False,
         "checkout": {
-            "expires_in": 120, # Link expira em 2 horas (opcional)
-            "payment_methods": ["credit_card", "pix"],
+            "expires_in": 120, # Link expira em 2 horas
+            "payment_methods": ["credit_card", "pix"], # Certifique-se que sua conta aceita isso
             "success_url": "https://urbano-licita-5idyvxrxmw58ucexzbuwwm.streamlit.app/",
             "skip_checkout_success_page": False,
             "customer_editable": False,
@@ -609,17 +620,33 @@ def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float):
     }
 
     try:
+        # Imprime no console do Streamlit para debug (veja nos logs do site)
+        print(f"--- ENVIANDO PAYLOAD PAGARME ({plan_tag}) ---")
+        
         response = requests.post(url, headers=get_pagarme_auth(), json=payload)
         resp_json = response.json()
         
+        # Imprime a resposta para você saber o que aconteceu
+        print(f"--- RESPOSTA PAGARME: {response.status_code} ---")
+        print(resp_json)
+
         if response.status_code == 200:
             checkouts = resp_json.get('checkouts', [])
             if checkouts:
                 return True, checkouts[0].get('payment_url'), resp_json.get('id')
-            return False, "Erro: URL não gerada", None
+            else:
+                # Se criou o pedido mas não gerou link, pode ser configuração da conta
+                return False, f"Erro: Pedido criado ({resp_json.get('id')}), mas sem Link de Checkout. Verifique meios de pagto no Dashboard.", None
         else:
-            return False, f"Erro API: {resp_json.get('message')}", None
+            # Retorna a mensagem de erro exata do Pagar.me
+            error_msg = resp_json.get('message', 'Erro desconhecido')
+            # Tenta pegar detalhes dos erros de validação
+            if 'errors' in resp_json:
+                error_msg += f" | Detalhes: {resp_json['errors']}"
+            return False, f"Erro API: {error_msg}", None
+
     except Exception as e:
+        print(f"--- ERRO CRÍTICO: {str(e)} ---")
         return False, str(e), None
 
 def check_pagarme_order_status(order_id):
