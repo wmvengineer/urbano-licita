@@ -546,6 +546,93 @@ def check_deadlines_and_notify():
     
     return logs
 
+# --- INTEGRAÇÃO PAGAR.ME V5 ---
+
+def get_pagarme_auth():
+    """Autenticação Basic Auth para Pagar.me V5"""
+    try:
+        api_key = st.secrets["PAGARME"]["API_KEY"]
+        # Codifica "API_KEY:" em base64
+        token = base64.b64encode(f"{api_key}:".encode()).decode()
+        return {
+            "Authorization": f"Basic {token}",
+            "Content-Type": "application/json",
+            "accept": "application/json"
+        }
+    except Exception as e:
+        st.error(f"Erro de Configuração Pagar.me: {e}")
+        return {}
+
+def create_pagarme_checkout(user_data, plan_tag, plan_name, amount_float):
+    """Cria pedido no Pagar.me e retorna URL de pagamento."""
+    url = "https://api.pagar.me/core/v5/orders"
+    amount_cents = int(amount_float * 100)
+    
+    # Tratamento de CNPJ/CPF (Remove tudo que não for número)
+    raw_doc = str(user_data.get('cnpj', ''))
+    doc_number = re.sub(r'\D', '', raw_doc)
+    if not doc_number: doc_number = "00000000000" # Fallback para evitar crash
+    
+    # Telefone Fictício (Obrigatório na API V5 se não tiver no cadastro)
+    phone_data = {"country_code": "55", "area_code": "11", "number": "999999999"}
+
+    payload = {
+        "customer": {
+            "name": user_data.get('name', 'Cliente Urbano'),
+            "email": user_data.get('email'),
+            "document": doc_number,
+            "type": "individual", # Simplificação (aceita CPF ou CNPJ neste campo na V5)
+            "phones": {
+                "mobile_phone": phone_data
+            }
+        },
+        "items": [{
+            "amount": amount_cents,
+            "description": f"Plano {plan_name}",
+            "quantity": 1,
+            "code": plan_tag
+        }],
+        "closed": False,
+        "checkout": {
+            "expires_in": 120, # Link expira em 2 horas (opcional)
+            "payment_methods": ["credit_card", "pix"],
+            "success_url": "https://urbano-licita-5idyvxrxmw58ucexzbuwwm.streamlit.app/",
+            "skip_checkout_success_page": False,
+            "customer_editable": False,
+            "billing_address_editable": True,
+            "pix": {"expires_in": 3600}
+        },
+        "metadata": {
+            "username": user_data.get('username'),
+            "plan_tag": plan_tag
+        }
+    }
+
+    try:
+        response = requests.post(url, headers=get_pagarme_auth(), json=payload)
+        resp_json = response.json()
+        
+        if response.status_code == 200:
+            checkouts = resp_json.get('checkouts', [])
+            if checkouts:
+                return True, checkouts[0].get('payment_url'), resp_json.get('id')
+            return False, "Erro: URL não gerada", None
+        else:
+            return False, f"Erro API: {resp_json.get('message')}", None
+    except Exception as e:
+        return False, str(e), None
+
+def check_pagarme_order_status(order_id):
+    """Consulta se o pedido foi pago."""
+    url = f"https://api.pagar.me/core/v5/orders/{order_id}"
+    try:
+        response = requests.get(url, headers=get_pagarme_auth())
+        if response.status_code == 200:
+            return response.json() # Retorna o objeto do pedido completo
+        return None
+    except:
+        return None
+
 # --- INTEGRAÇÃO LIVEPIX ---
 
 def debug_check_token(token):

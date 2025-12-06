@@ -34,6 +34,61 @@ from streamlit_calendar import calendar
 icon_file = "LOGO URBANO OFICIAL.png" if os.path.exists("LOGO URBANO OFICIAL.png") else "🏢"
 st.set_page_config(page_title="Urbano", layout="wide", page_icon=icon_file)
 
+# --- NOVO BLOCO: PROCESSAMENTO DE RETORNO (RODA ANTES DO LOGIN) ---
+# Isso garante que o plano ative mesmo se o usuário voltar deslogado.
+
+qp = st.query_params
+if qp.get("status") == "approved" and qp.get("payment_id"):
+    pay_id = qp.get("payment_id")
+    
+    # Verifica se já processamos este ID nesta sessão para evitar loops
+    if "last_processed_payment" not in st.session_state or st.session_state.last_processed_payment != pay_id:
+        
+        # Mostra aviso visual que estamos trabalhando
+        status_msg = st.empty()
+        status_msg.info("🔄 Detectamos um pagamento! Validando com o Mercado Pago...")
+        
+        # 1. Consulta a API do Mercado Pago
+        payment_info = db.get_payment_details(pay_id)
+        
+        if payment_info and payment_info.get("status") == "approved":
+            # 2. Descobre quem é o dono do pagamento pelos metadados
+            meta = payment_info.get("metadata", {})
+            target_username = meta.get("username")
+            plan_bought = meta.get("plan_tag")
+            
+            if target_username and plan_bought:
+                # 3. ATIVA O PLANO NO BANCO DE DADOS (Independente de estar logado)
+                expiration = None
+                if plan_bought == 'unlimited_30':
+                    expiration = datetime.now() + timedelta(days=30)
+                
+                # Atualiza o banco
+                db.admin_update_plan(target_username, plan_bought, expires_at=expiration)
+                db.admin_set_credits_used(target_username, 0)
+                
+                # 4. Mensagem de Sucesso
+                status_msg.success(f"✅ Pagamento confirmado! O plano foi ativado para o usuário '{target_username}'.")
+                
+                # Se o usuário estiver logado e for o mesmo, atualiza a sessão visual também
+                if st.session_state.user and st.session_state.user['username'] == target_username:
+                    st.session_state.user['plan'] = plan_bought
+                    st.session_state.user['credits'] = 0
+                    st.toast("Seu plano foi ativado!", icon="🎉")
+                
+                # Marca como processado
+                st.session_state.last_processed_payment = pay_id
+                
+                # Limpa a URL após 4 segundos para ficar limpo
+                time.sleep(4)
+                st.query_params.clear()
+                st.rerun()
+            else:
+                status_msg.error("Erro: Pagamento sem identificação de usuário.")
+        else:
+            status_msg.error("O pagamento ainda não foi aprovado ou é inválido.")
+# ------------------------------------------------------------------
+
 # API KEY
 try:
     if "GOOGLE_API_KEY" in st.secrets:
@@ -184,28 +239,9 @@ if 'user' not in st.session_state:
 if st.session_state.user is None:
     # Pequeno delay para garantir que o navegador enviou o cookie
     time.sleep(0.3)
-    
-    auth_cookie = cookie_manager.get("urbano_auth")
-    
-    if auth_cookie:
-        try:
-            u, t = auth_cookie.split('|')
-            if db.check_session_valid(u, t):
-                raw = db.get_user_by_username(u)
-                if raw:
-                    st.session_state.user = {
-                        "username": raw.get('username'), 
-                        "name": raw.get('name'),
-                        "role": raw.get('role'), 
-                        "plan": raw.get('plan_type', 'free'),
-                        "credits": raw.get('credits_used', 0), 
-                        "token": raw.get('token'),
-                        "company_name": raw.get('company_name', ''), # Carrega Empresa
-                        "cnpj": raw.get('cnpj', '')                  # Carrega CNPJ
-                    }
-                    st.rerun()
-        except:
-            pass
+# --- LÓGICA DE RETORNO AUTOMÁTICO (CALLBACK) ---
+# Verifica se a URL tem o status de aprovado
+query_params = st.query_params
 
 def logout():
     st.session_state.user = None
@@ -494,6 +530,48 @@ if not st.session_state.user:
 
 # --- ÁREA LOGADA ---
 user = st.session_state.user
+query_params = st.query_params # Streamlit novo usa st.query_params
+
+if query_params.get("status") == "approved" and query_params.get("payment_id"):
+    pay_id = query_params.get("payment_id")
+    
+    # Para evitar reprocessar o mesmo pagamento toda vez que der refresh,
+    # podemos salvar o ID processado na sessão ou apenas confiar na verificação.
+    if "last_processed_payment" not in st.session_state or st.session_state.last_processed_payment != pay_id:
+        with st.spinner("Validando pagamento..."):
+            payment_info = db.get_payment_details(pay_id)
+            
+            if payment_info and payment_info.get("status") == "approved":
+                # Recupera qual era o plano através dos metadados que enviamos
+                meta = payment_info.get("metadata", {})
+                plan_tag_bought = meta.get("plan_tag")
+                buyer_user = meta.get("username")
+                
+                # Validação de segurança: O pagamento é deste usuário mesmo?
+                if buyer_user == user['username'] and plan_tag_bought:
+                    
+                    # ATIVA O PLANO
+                    expiration = None
+                    if plan_tag_bought == 'unlimited_30':
+                        expiration = datetime.now() + timedelta(days=30)
+                    
+                    db.admin_update_plan(user['username'], plan_tag_bought, expires_at=expiration)
+                    db.admin_set_credits_used(user['username'], 0)
+                    
+                    # Atualiza a sessão atual para refletir a mudança imediatamente
+                    user['plan'] = plan_tag_bought
+                    user['credits'] = 0
+                    st.session_state.user['plan'] = plan_tag_bought
+                    
+                    st.toast("✅ Pagamento confirmado! Plano ativado com sucesso!", icon="🎉")
+                    st.session_state.last_processed_payment = pay_id
+                    
+                    # Limpa a URL para não ficar processando de novo
+                    time.sleep(2)
+                    st.query_params.clear()
+                    st.rerun()
+            else:
+                st.error("Erro ao validar pagamento. Entre em contato com o suporte.")
 if 'analise_atual' not in st.session_state: st.session_state.analise_atual = None
 if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 if 'gemini_files_handles' not in st.session_state: st.session_state.gemini_files_handles = []
@@ -1307,14 +1385,71 @@ elif menu == "📅 Calendário":
             if pdf: 
                 st.download_button("⬇️ Baixar PDF da Análise", data=pdf, file_name="analise_completa.pdf")
 
-# 6. ASSINATURA
+# 6. ASSINATURA (ATUALIZADO PARA MERCADO PAGO)
 elif menu == "Assinatura":
-    st.title("💎 Planos")
-    st.info(f"Plano Atual: **{user['plan'].upper()}**")
-    cols = st.columns(4)
-    plans = [("🥉 Plano 15", "15 Editais", "R$ 39,90"), ("🥈 Plano 30", "30 Editais", "R$ 69,90"), 
-             ("🥇 Plano 60", "60 Editais", "R$ 109,90"), ("💎 Plano 90", "90 Editais", "R$ 149,90")]
-    for i, (n, q, v) in enumerate(plans):
-        with cols[i]:
-            st.markdown(f"### {n}\n**{q}**\n### {v}"); st.button(f"Assinar {n}", key=f"b_{i}")
-    st.markdown("---"); st.caption("Envie comprovante para o Suporte.")
+    st.title("💎 Planos & Assinaturas")
+    st.info(f"Seu Plano Atual: **{PLAN_MAP.get(user.get('plan'), user.get('plan', 'free')).upper()}** | Créditos Disponíveis: {user.get('credits', 0)}")
+    
+    # --- CONFIGURAÇÕES DE CONTATO ---
+    # Coloque seu número com DDI e DDD (apenas números) para o suporte/comprovante
+    SEU_WHATSAPP = "5511999999999" 
+    # ----------------------------------
+
+    st.markdown("""
+    ### Como funciona:
+    1. Escolha o plano e clique em **"Pagar"** (você será redirecionado para o Mercado Pago).
+    2. Realize o pagamento com segurança.
+    3. Após o pagamento, caso seus créditos não entrem automaticamente em instantes, clique em **"Enviar Comprovante"**.
+    """)
+    
+    st.divider()
+
+    # Lista Completa de Planos com LINKS DO MERCADO PAGO
+    # Estrutura: (Nome, Tag, Preço Visual, Preço Float, Link MP)
+    plans_data = [
+        ("🥉 Plano 15", "plano_15", "R$ 29,90", 29.90, "https://mpago.la/2iEYifv"),
+        ("🥈 Plano 30", "plano_30", "R$ 54,90", 54.90, "https://mpago.la/2Mzfs4U"),
+        ("🥇 Plano 60", "plano_60", "R$ 96,90", 96.90, "https://mpago.li/13KHDPS"),
+        ("💎 Plano 90", "plano_90", "R$ 125,90", 125.90, "https://mpago.li/2ptqrY4"),
+        ("♾️ Ilimitado (30 Dias)", "unlimited_30", "R$ 229,90", 229.90, "https://mpago.li/1q8Eiev")
+    ]
+
+    # Distribuição das colunas
+    cols = st.columns(len(plans_data)) if len(plans_data) <= 3 else st.columns(3)
+    
+    # Adicionado p_link na descompactação
+    for i, (p_name, p_tag, p_str_price, p_val, p_link) in enumerate(plans_data):
+        col = cols[i % 3] 
+        with col:
+            with st.container(border=True):
+                st.markdown(f"### {p_name}")
+                st.markdown(f"<h2 style='color: #009EE3;'>{p_str_price}</h2>", unsafe_allow_html=True) # Azul Mercado Pago
+                
+                # Botão 1: Link de Pagamento ESPECÍFICO (Abre nova aba)
+                st.link_button(
+                    f"💸 Pagar {p_str_price}", 
+                    url=p_link,  # <--- AQUI USA O LINK DO PLANO ESPECÍFICO
+                    type="primary", 
+                    use_container_width=True
+                )
+                
+                st.write("") # Espaço
+                
+                # Dados para mensagem de suporte
+                u_name = user.get('username', 'Usuario')
+                u_email = user.get('email', 'Email não idenf.')
+                
+                msg_wpp = f"Olá! Sou o usuário *{u_name}* ({u_email}).\n" \
+                          f"Acabei de pagar o *{p_name}* ({p_str_price}) via Mercado Pago.\n" \
+                          f"Gostaria de solicitar a liberação ou suporte."
+                
+                import urllib.parse
+                msg_encoded = urllib.parse.quote(msg_wpp)
+                link_wpp = f"https://wa.me/{SEU_WHATSAPP}?text={msg_encoded}"
+                
+                # Botão 2: Suporte / Comprovante
+                st.link_button(
+                    "📱 Suporte / Comprovante", 
+                    url=link_wpp, 
+                    use_container_width=True
+                )

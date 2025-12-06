@@ -12,6 +12,12 @@ import re
 import pandas as pd
 import string 
 import random
+# --- NOVOS IMPORTS NECESSÁRIOS PARA O PAGAR.ME ---
+import base64    # <--- O ERRO ESTÁ AQUI (FALTAVA ESTE)
+import requests  # <--- E ESTE TAMBÉM
+import json
+import datetime
+import uuid
 
 # --- CONFIGURAÇÃO ---
 BUCKET_NAME = "urbano-licita.firebasestorage.app" 
@@ -539,3 +545,29 @@ def check_deadlines_and_notify():
                 logs.append(f"ℹ️ {username}: {found_greens} verdes analisados, nenhum no prazo (0-2 dias úteis).")
     
     return logs
+
+# --- INTEGRAÇÃO LIVEPIX ---
+
+def debug_check_token(token):
+    """
+    Função auxiliar para testar se o token é válido conectando no endpoint de usuário.
+    """
+    url = "https://api.livepix.gg/v2/user"
+    headers = {"Authorization": token}
+    try:
+        resp = requests.get(url, headers=headers, timeout=5)
+        print(f"--- DEBUG TOKEN CHECK ---")
+        print(f"Status: {resp.status_code}")
+        print(f"Response: {resp.text}")
+        
+        if resp.status_code == 200:
+            return True, "Token Válido (Usuário encontrado)"
+        elif resp.status_code == 404:
+            # Se der 404 aqui, a URL base está errada ou o token não é de App
+            return False, "Endpoint de usuário não encontrado (Token incorreto?)"
+        elif resp.status_code == 401:
+            return False, "Token Não Autorizado (401)"
+        else:
+            return False, f"Erro desconhecido: {resp.status_code}"
+    except Exception as e:
+        return False, f"Erro de conexão: {str(e)}"
